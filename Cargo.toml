@@ -1,0 +1,15 @@
+[package]
+name = "blackfynn"
+version = "0.1.0"
+authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
+publish = false
+
+[dependencies]
+futures = "0.1.18"
+hyper = "0.11.21"
+hyper-tls = "0.1.2"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+tokio-core = "0.1.12"
+url = "1.6.0"
