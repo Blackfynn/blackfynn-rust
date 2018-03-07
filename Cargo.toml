@@ -5,9 +5,13 @@ authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
 
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 futures = "0.1.18"
 hyper = "0.11.21"
 hyper-tls = "0.1.2"
+rusoto_core = "0.32.0"
+rusoto_credential = "0.11.0"
+rusoto_s3 = "0.32.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"

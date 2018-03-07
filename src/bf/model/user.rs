@@ -1,7 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 /// A user, as defined by the Blackfynn API
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {

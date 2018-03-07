@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use bf::model;
 
 /// A type representing an API response containing a channel

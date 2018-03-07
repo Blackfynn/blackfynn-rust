@@ -1,8 +1,10 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use bf::model;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ExpandedOrganization {
+pub struct Organization {
     pub is_admin: bool,
     pub is_owner: bool,
     pub owners: Vec<model::User>,
@@ -13,7 +15,6 @@ pub struct ExpandedOrganization {
 /// A type representing a listing of organizations a user is a member of
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Organization {
-    pub organizations: Vec<ExpandedOrganization>
+pub struct Organizations {
+    pub organizations: Vec<Organization>
 }
-

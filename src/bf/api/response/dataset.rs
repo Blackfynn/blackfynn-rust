@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use bf::model;
 use bf::api::response::package::Package;
 

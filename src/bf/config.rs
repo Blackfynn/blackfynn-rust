@@ -1,8 +1,12 @@
-/// Configuration options.
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
+//! Library configuration options and environment definitions.
 
 use std::env;
 
 use url::Url;
+
+use bf::model::aws;
 
 /// Defines the environment the library is operating with.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -21,7 +25,8 @@ impl Environment {
         match *self {
             Local => {
                 let api_loc = env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
-                api_loc.parse::<Url>().expect(&format!("Not a valid url: {}", api_loc))
+                let url = api_loc.parse::<Url>().expect(&format!("Not a valid url: {}", api_loc));
+                url
             },
             Development => "https://dev.blackfynn.io"
                 .parse::<Url>()
@@ -35,18 +40,31 @@ impl Environment {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Config {
-    env: Environment
+    env: Environment,
+    s3_server_side_encryption: aws::S3ServerSideEncryption
 }
 
 impl Config {
     #[allow(dead_code)]
     pub fn new(env: Environment) -> Self {
-        Config {
+        Self {
+            s3_server_side_encryption: Default::default(),
             env
         }
     }
 
+    #[allow(dead_code)]
     pub fn env(&self) -> &Environment {
         &self.env
+    }
+
+    #[allow(dead_code)]
+    pub fn api_url(&self) -> Url {
+        self.env.url()
+    }
+
+    #[allow(dead_code)]
+    pub fn s3_server_side_encryption(&self) -> &aws::S3ServerSideEncryption {
+        &self.s3_server_side_encryption
     }
 }

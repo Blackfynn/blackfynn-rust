@@ -1,7 +1,13 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
+extern crate chrono;
 extern crate futures;
 #[macro_use]
 extern crate hyper;
 extern crate hyper_tls;
+extern crate rusoto_core;
+extern crate rusoto_credential;
+extern crate rusoto_s3;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -9,7 +15,7 @@ extern crate serde_json;
 extern crate tokio_core;
 extern crate url;
 
-// Expose module `bf`:
+// Expose top-level module `bf`:
 mod bf;
 
 // Re-export:

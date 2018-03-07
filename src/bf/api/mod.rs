@@ -1,11 +1,8 @@
-// Expose module `bf::api::client`:
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 pub mod client;
-
-// Expose module `bf::api::request`:
 pub mod request;
-
-// Expose module `bf::api::response`:
 pub mod response;
 
-// Expose module `bf::api::types`:
-pub mod types;
+// Re-export:
+pub use self::client::Blackfynn;

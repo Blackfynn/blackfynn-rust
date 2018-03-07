@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 /// Representation of a Blackfynn API channel
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -8,9 +10,9 @@ pub struct Channel {
     start: i64,
     end: i64,
     unit: String,
-    spike_duration: i64,
+    spike_duration: Option<i64>,
     channel_type: String,
-    group: String
+    group: Option<String>
 }
 
 impl Channel {
@@ -30,7 +32,7 @@ impl Channel {
         self.end
     }
 
-    pub fn spike_duration(&self) -> i64 {
+    pub fn spike_duration(&self) -> Option<i64> {
         self.spike_duration
     }
 
@@ -38,7 +40,7 @@ impl Channel {
         &self.channel_type
     }
 
-    pub fn group(&self) -> &String {
+    pub fn group(&self) -> &Option<String> {
         &self.group
     }
 }
