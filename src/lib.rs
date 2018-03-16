@@ -16,7 +16,7 @@ extern crate tokio_core;
 extern crate url;
 
 // Expose top-level module `bf`:
-mod bf;
+pub mod bf;
 
 // Re-export:
 pub use bf::api::client::Blackfynn;
