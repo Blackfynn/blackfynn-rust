@@ -67,8 +67,7 @@ trait Request<T>: Future<Item=T, Error=bf::error::Error> {
 // ============================================================================
 
 impl Blackfynn {
-    #[allow(dead_code)]
-    fn new(handle: &Handle, config: Config) -> Self {
+    pub fn new(handle: &Handle, config: Config) -> Self {
         let http_client = Client::configure()
             .connector(HttpsConnector::new(4, handle).unwrap())
             .build(&handle);
