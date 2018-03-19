@@ -1,5 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use bf::model;
+
 /// A user, as defined by the Blackfynn API
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -8,6 +10,7 @@ pub struct User {
     first_name: String,
     last_name: String,
     email: String,
+    preferred_organization: Option<model::OrganizationId>,
 }
 
 impl User {
@@ -25,5 +28,9 @@ impl User {
 
     pub fn email(&self) -> &String {
         &self.email
+    }
+
+    pub fn preferred_organization(&self) -> &Option<model::OrganizationId> {
+        &self.preferred_organization
     }
 }

@@ -13,7 +13,7 @@ pub mod security;
 pub mod upload;
 
 // Re-export
-pub use self::account::{Login};
+pub use self::account::{ApiSession};
 pub use self::channel::{Channel};
 pub use self::dataset::{Dataset};
 pub use self::file::{File};

@@ -5,7 +5,9 @@
 
 pub mod account;
 pub mod upload;
+pub mod user;
 
 // Re-export
-pub use self::account::{Login};
+pub use self::account::{ApiLogin};
 pub use self::upload::{PreviewPackage};
+pub use self::user::{User};

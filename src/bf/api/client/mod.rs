@@ -2,6 +2,7 @@
 
 pub mod get;
 pub mod post;
+pub mod put;
 
 use std::path::Path;
 use std::cell::RefCell;
@@ -27,6 +28,7 @@ use bf::config::Config;
 use bf::api::{request, response};
 use bf::api::client::get::Get;
 use bf::api::client::post::Post;
+use bf::api::client::put::Put;
 use bf::model::{ImportId, DatasetId, PackageId, SessionToken, OrganizationId, S3File, UploadCredential};
 
 /// A custom session ID header for the Blackfynn API
@@ -247,23 +249,47 @@ impl Blackfynn {
     }
 
     /// Sets the current organization the user is associated with.
-    pub fn set_current_organization(&self, id: &OrganizationId) {
-        self.inner.borrow_mut().current_organization = Some(id.clone())
+    pub fn set_current_organization(&self, id: Option<OrganizationId>) {
+        self.inner.borrow_mut().current_organization = id
     }
 
     /// Return a Future that, when resolved, logs in to the Blackfynn API.
     /// If successful, the Blackfynn client will store the resulting session
     /// token for subsequent API calls.
     #[allow(dead_code)]
-    pub fn login<S: Into<String>>(&self, email: S, password: S) -> bf::Future<response::Login> {
+    pub fn login<S: Into<String>>(&self, api_key: S, api_secret: S) -> bf::Future<response::ApiSession> {
         let this = self.clone();
         Box::new(
-            Post::<request::Login, response::Login>::new(self, "/account/login")
-            .body(request::Login::new(email.into(), password.into()))
-            .and_then(move |login_response: response::Login| {
-                this.inner.borrow_mut().session_token = login_response.session_token.clone();
+            Post::<request::ApiLogin, response::ApiSession>::new(self, "/account/api/session")
+            .body(request::ApiLogin::new(api_key.into(), api_secret.into()))
+            .and_then(move |login_response: response::ApiSession| {
+                this.inner.borrow_mut().session_token = Some(login_response.session_token.clone());
                 Ok(login_response)
             })
+        )
+    }
+
+    /// Return a Future, that when, resolved returns the user
+    /// associated with the session_token.
+    pub fn get_user(&self) -> Get<model::User> {
+        Get::new(self, "/user/")
+    }
+
+    /// Return a Future, that when, resolved sets the current user preferred organization
+    /// and returns the updated user.
+    pub fn set_preferred_organization(&self, organization_id: Option<OrganizationId>) -> bf::Future<model::User> {
+        let this = self.clone();
+        let user = request::User {
+            organization: organization_id.map(Into::into),
+            ..Default::default()
+        };
+        Box::new(
+            Put::new(self, "/user/")
+                .body(user)
+                .and_then(move |user_response: model::User| {
+                    this.set_current_organization(user_response.preferred_organization().clone());
+                    Ok(user_response)
+                })
         )
     }
 
@@ -419,8 +445,8 @@ mod tests {
 
     const TEST_DATA_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data");
     const TEST_ENVIRONMENT: Environment = Environment::Development;
-    const TEST_USER_EMAIL: &'static str = env!("BLACKFYNN_RUST_API_USER");
-    const TEST_PASSWORD: &'static str = env!("BLACKFYNN_RUST_API_PASSWORD");
+    const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
+    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_SECRET_KEY");
 
     // "Blackfynn"
     const FIXTURE_ORGANIZATION: &'static str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
@@ -447,7 +473,7 @@ mod tests {
     #[test]
     fn login_successfully_locally() {
         let (bf, mut core) = create_bf_client();
-        let login = bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+        let login = bf.login(TEST_API_KEY, TEST_SECRET_KEY)
             .then(|r| {
                 assert!(r.is_ok());
                 future::result(r)
@@ -459,7 +485,7 @@ mod tests {
     #[test]
     fn login_fails_locally() {
         let (bf, mut core) = create_bf_client();
-        let login = bf.login(TEST_USER_EMAIL, "this-is-a-bad-password")
+        let login = bf.login(TEST_API_KEY, "this-is-a-bad-secret")
             .then(|r| {
                 assert!(r.is_err());
                 future::result(r)
@@ -473,7 +499,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let org = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.organizations()
                 })
@@ -483,11 +509,47 @@ mod tests {
     }
 
     #[test]
+    fn fetching_user_after_login_is_successful() {
+        let config = Config::new(TEST_ENVIRONMENT);
+        let user = Blackfynn::run(config, move |bf| {
+            Box::new(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| {
+                    bf.get_user()
+                })
+            )
+        });
+        assert!(user.is_ok());
+    }
+
+    #[test]
+    fn updating_org_after_login_is_successful() {
+        let config = Config::new(TEST_ENVIRONMENT);
+        let user = Blackfynn::run(config, move |bf| {
+            Box::new(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| {
+                    return2(bf.get_user(), future::ok(bf))
+                })
+                .and_then(move |(user, bf)| {
+                    let org = user.preferred_organization().clone();
+                    return2(
+                        bf.set_preferred_organization(org),
+                        future::ok(bf)
+                    )
+                })
+                .and_then(move |(_, bf)| bf.get_user())
+            )
+        });
+        assert!(user.is_ok());
+    }
+
+    #[test]
     fn fetching_organizations_fails_if_login_fails() {
         let config = Config::new(TEST_ENVIRONMENT);
         let org = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, "another-bad-password")
+                bf.login(TEST_API_KEY, "another-bad-secret")
                 .and_then(move |_| {
                     bf.organizations()
                 })
@@ -501,7 +563,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let org = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
                 })
@@ -515,7 +577,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let ds = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.datasets()
                 })
@@ -540,7 +602,8 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let ds = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .map_err(|e| {println!("{:#?}", e); e})
                 .and_then(move |_| {
                     bf.dataset_by_id(DatasetId::new(FIXTURE_DATASET))
                 })
@@ -554,7 +617,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let ds = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.dataset_by_id(DatasetId::new("N:dataset:not-real-6803-4a67-bf20-83076774a5c7"))
                 })
@@ -568,7 +631,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let cred = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.grant_upload(DatasetId::new(FIXTURE_DATASET))
                 })
@@ -582,7 +645,7 @@ mod tests {
         let config = Config::new(TEST_ENVIRONMENT);
         let preview = Blackfynn::run(config, move |bf| {
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
                     bf.preview_upload(TEST_DATA_DIR, &test_data_files(), false)
                 })
@@ -601,11 +664,8 @@ mod tests {
             let dataset_id = dataset_id.clone();
             let test_files = test_files.clone();
             Box::new(
-                bf.login(TEST_USER_EMAIL, TEST_PASSWORD)
-                .and_then(move |login_response| {
-                    Ok(login_response.profile.expect("missing user profile"))
-                })
-                .and_then(move |_user| {
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_login_response| {
                     return2(
                         bf.grant_upload(dataset_id.clone()),
                         future::ok(bf)

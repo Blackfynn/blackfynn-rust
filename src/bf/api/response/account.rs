@@ -4,10 +4,8 @@ use bf::model;
 
 /// A type representing the result of a successful login
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Login {
-    pub session_token: Option<model::SessionToken>,
-    pub organization: Option<String>,
-    pub profile: Option<model::User>,
-    pub message: Option<String>
+pub struct ApiSession {
+    pub session_token: model::SessionToken,
+    pub organization: String,
+    pub expires_in: i32,
 }

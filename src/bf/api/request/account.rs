@@ -3,16 +3,16 @@
 /// A type representing a login request
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Login {
-    pub email: String,
-    pub password: String
+pub struct ApiLogin {
+    pub token_id: String,
+    pub secret: String
 }
 
-impl Login {
-    pub fn new(email: String, password: String) -> Self {
+impl ApiLogin {
+    pub fn new(token_id: String, secret: String) -> Self {
         Self {
-            email,
-            password
+            token_id,
+            secret
         }
     }
 }
