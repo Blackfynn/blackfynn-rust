@@ -275,8 +275,8 @@ impl Blackfynn {
         Get::new(self, "/user/")
     }
 
-    /// Return a Future, that when, resolved returns the user
-    /// associated with the session_token.
+    /// Return a Future, that when, resolved sets the current user preferred organization
+    /// and returns the updated user.
     pub fn set_preferred_organization(&self, organization_id: Option<OrganizationId>) -> bf::Future<model::User> {
         let this = self.clone();
         let user = request::User {
