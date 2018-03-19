@@ -445,8 +445,8 @@ mod tests {
 
     const TEST_DATA_DIR: &'static str = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data");
     const TEST_ENVIRONMENT: Environment = Environment::Development;
-    const TEST_API_KEY: &'static str = env!("BLACKFYNN_RUST_API_KEY");
-    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_RUST_SECRET_KEY");
+    const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
+    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_SECRET_KEY");
 
     // "Blackfynn"
     const FIXTURE_ORGANIZATION: &'static str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
