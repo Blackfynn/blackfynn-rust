@@ -315,6 +315,11 @@ impl Blackfynn {
         Get::new(self, format!("/datasets/{id}", id=Into::<String>::into(id)))
     }
 
+    /// Return a Future, that when, resolved returns the specified package.
+    pub fn package_by_id(&self, id: PackageId) -> Get<response::Package> {
+        Get::new(self, format!("/packages/{id}", id=Into::<String>::into(id)))
+    }
+
     /// Grant temporary upload access to the specific dataset for the current session.
     pub fn grant_upload(&self, dataset_id: DatasetId) -> Get<response::UploadCredential> {
         Get::new(self, format!("/security/user/credentials/upload/{dataset}", dataset=Into::<String>::into(dataset_id)))
@@ -452,6 +457,8 @@ mod tests {
     const FIXTURE_ORGANIZATION: &'static str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
     // "Blackfynn"
     const FIXTURE_DATASET: &'static str = "N:dataset:5a6779a4-e3d8-473f-91d0-0a99f144dc44";
+    // "Blackfynn"
+    const FIXTURE_PACKAGE: &'static str = "N:collection:ff596451-9525-496b-9618-dccce356d4f4";
 
     fn create_bf_client() -> (Blackfynn, Core) {
         let core = Core::new().expect("couldn't create tokio core");
@@ -610,6 +617,21 @@ mod tests {
             )
         });
         assert!(ds.is_ok());
+    }
+
+    #[test]
+    fn fetching_package_by_id_successful_if_logged_in_and_exists() {
+        let config = Config::new(TEST_ENVIRONMENT);
+        let package = Blackfynn::run(config, move |bf| {
+            Box::new(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .map_err(|e| {println!("{:#?}", e); e})
+                .and_then(move |_| {
+                    bf.package_by_id(PackageId::new(FIXTURE_PACKAGE))
+                })
+            )
+        });
+        assert!(package.is_ok());
     }
 
     #[test]

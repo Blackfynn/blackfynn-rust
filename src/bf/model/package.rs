@@ -102,6 +102,7 @@ impl PackageType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Package {
+    id: PackageId,
     name: String,
     dataset_id: model::DatasetId,
     package_state: Option<PackageState>,

@@ -36,12 +36,13 @@ impl From<DatasetId> for String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {
+    id: DatasetId,
     name: String,
     state: Option<model::PackageState>,
     description: Option<String>,
     #[serde(deserialize_with = "model::PackageType::deserialize")]
     package_type: Option<model::PackageType>,
-    created_at: DateTime<Utc> ,
+    created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>
 }
 

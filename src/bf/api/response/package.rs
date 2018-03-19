@@ -19,5 +19,6 @@ pub struct ObjectMap {
 pub struct Package {
     pub channels: Option<Vec<response::channel::Channel>>,
     pub content: model::Package,
+    pub children: Option<Vec<Package>>,
     pub objects: Option<ObjectMap>,
 }
