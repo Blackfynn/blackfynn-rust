@@ -82,14 +82,14 @@ impl Blackfynn {
     }
 
     /// Sets the current organization the user is associated with and returns self.
-    pub fn with_current_organization(self, id: &OrganizationId) -> Self {
-        self.inner.borrow_mut().current_organization = Some(id.clone());
+    pub fn with_current_organization(self, id: OrganizationId) -> Self {
+        self.inner.borrow_mut().current_organization = Some(id);
         self
     }
 
     /// Sets the current organization the user is associated with and returns self.
-    pub fn with_session_token(self, id: &SessionToken) -> Self {
-        self.inner.borrow_mut().session_token = Some(id.clone());
+    pub fn with_session_token(self, id: SessionToken) -> Self {
+        self.inner.borrow_mut().session_token = Some(id);
         self
     }
 
