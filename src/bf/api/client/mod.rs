@@ -88,8 +88,8 @@ impl Blackfynn {
     }
 
     /// Sets the current organization the user is associated with and returns self.
-    pub fn with_session_token(self, id: SessionToken) -> Self {
-        self.inner.borrow_mut().session_token = Some(id);
+    pub fn with_session_token(self, token: SessionToken) -> Self {
+        self.inner.borrow_mut().session_token = Some(token);
         self
     }
 
