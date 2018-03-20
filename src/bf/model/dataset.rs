@@ -48,8 +48,8 @@ pub struct Dataset {
 
 impl Dataset {
     #[allow(dead_code)]
-    pub fn id(&self) -> &String {
-        self.id.as_ref()
+    pub fn id(&self) -> &DatasetId {
+        &self.id
     }
 
     #[allow(dead_code)]

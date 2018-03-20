@@ -114,8 +114,8 @@ pub struct Package {
 
 impl Package {
     #[allow(dead_code)]
-    pub fn id(&self) -> &String {
-        &self.id.as_ref()
+    pub fn id(&self) -> &model::PackageId {
+        &self.id
     }
 
     #[allow(dead_code)]
