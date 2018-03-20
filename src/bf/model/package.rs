@@ -114,6 +114,11 @@ pub struct Package {
 
 impl Package {
     #[allow(dead_code)]
+    pub fn id(&self) -> &String {
+        &self.id.as_ref()
+    }
+
+    #[allow(dead_code)]
     pub fn name(&self) -> &String {
         &self.name
     }

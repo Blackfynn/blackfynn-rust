@@ -1,6 +1,6 @@
 [package]
 name = "blackfynn"
-version = "0.1.6"
+version = "0.1.7"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
 
