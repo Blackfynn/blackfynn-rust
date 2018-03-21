@@ -253,6 +253,11 @@ impl Blackfynn {
         self.inner.borrow_mut().current_organization = id
     }
 
+    /// Sets the session token the user is associated with.
+    pub fn set_session_token(self, token: Option<SessionToken>) {
+        self.inner.borrow_mut().session_token = token;
+    }
+
     /// Return a Future that, when resolved, logs in to the Blackfynn API.
     /// If successful, the Blackfynn client will store the resulting session
     /// token for subsequent API calls.
