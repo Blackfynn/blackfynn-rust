@@ -254,7 +254,7 @@ impl Blackfynn {
     }
 
     /// Sets the session token the user is associated with.
-    pub fn set_session_token(self, token: Option<SessionToken>) {
+    pub fn set_session_token(&self, token: Option<SessionToken>) {
         self.inner.borrow_mut().session_token = token;
     }
 
