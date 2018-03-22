@@ -96,7 +96,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn new<P: AsRef<Path>>(path: P, file: P) -> bf::Result<Self> {
+    pub fn new<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q) -> bf::Result<Self> {
         let (file_name, metadata) = Self::normalize(path, file)?;
         Ok(Self {
             // Note: This value is only used in a meaningful way by the
@@ -106,6 +106,16 @@ impl S3File {
             file_name,
             size: Some(metadata.len())
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn from_file_path<P: AsRef<Path>>(file_path: P) -> bf::Result<Self> {
+        let file_path = file_path.as_ref();
+        let path = file_path.parent()
+            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
+        let file = file_path.file_name()
+            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
+        S3File::new(path, file)
     }
 
     #[allow(dead_code)]
