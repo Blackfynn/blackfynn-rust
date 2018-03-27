@@ -11,9 +11,9 @@ pub struct PreviewPackage {
 
 impl PreviewPackage {
     #[allow(dead_code)]
-    pub fn new(files: &Vec<model::upload::S3File>) -> Self {
+    pub fn new(files: &[model::upload::S3File]) -> Self {
         Self {
-            files: files.clone()
+            files: files.to_owned()
         }
     }
 }

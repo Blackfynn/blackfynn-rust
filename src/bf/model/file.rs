@@ -18,7 +18,7 @@ pub struct File {
     s3bucket: String,
     s3key: String,
     object_type: FileObjectType,
-    size: usize
+    size: u64
 }
 
 impl File {
@@ -48,7 +48,7 @@ impl File {
     }
 
     #[allow(dead_code)]
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> u64 {
         self.size
     }
 }

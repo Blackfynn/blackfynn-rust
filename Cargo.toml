@@ -7,13 +7,18 @@ publish = false
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.1.18"
+futures-timer = "0.1"
 hyper = "0.11.21"
 hyper-tls = "0.1.2"
+lazy_static = "1.0.0"
 rusoto_core = "0.32.0"
 rusoto_credential = "0.11.0"
 rusoto_s3 = "0.32.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
-tokio-core = "0.1.12"
+tokio-core = "0.1.16"
 url = "1.6.0"
+
+[dev-dependencies]
+pbr = "1.0.0"
