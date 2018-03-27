@@ -8,9 +8,9 @@ use bf::api::response;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectMap {
-    source: Option<Vec<response::file::File>>,
-    file: Option<Vec<response::file::File>>,
-    view: Option<Vec<response::file::File>>
+    pub source: Option<Vec<response::file::File>>,
+    pub file: Option<Vec<response::file::File>>,
+    pub view: Option<Vec<response::file::File>>
 }
 
 /// A type representing an API response containing a package.

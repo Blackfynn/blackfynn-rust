@@ -11,4 +11,17 @@ pub struct PreviewPackage {
 
 // Currently, the response type for `files/upload/complete/{importId}` just
 // maps to a manifest directly:
-pub type Manifest = model::Manifest;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Manifest(model::Manifest);
+
+impl From<Manifest> for model::Manifest {
+    fn from(manifest: Manifest) -> Self {
+        manifest.0
+    }
+}
+
+impl AsRef<model::Manifest> for Manifest {
+    fn as_ref(&self) -> &model::Manifest {
+        &self.0
+    }
+}

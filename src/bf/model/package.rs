@@ -129,13 +129,13 @@ impl Package {
     }
 
     #[allow(dead_code)]
-    pub fn package_state(&self) -> &Option<PackageState> {
-        &self.package_state
+    pub fn package_state(&self) -> Option<&PackageState> {
+        self.package_state.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> &Option<PackageType> {
-        &self.package_type
+    pub fn package_type(&self) -> Option<&PackageType> {
+        self.package_type.as_ref()
     }
 
     #[allow(dead_code)]

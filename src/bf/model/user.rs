@@ -30,7 +30,7 @@ impl User {
         &self.email
     }
 
-    pub fn preferred_organization(&self) -> &Option<model::OrganizationId> {
-        &self.preferred_organization
+    pub fn preferred_organization(&self) -> Option<&model::OrganizationId> {
+        self.preferred_organization.as_ref()
     }
 }

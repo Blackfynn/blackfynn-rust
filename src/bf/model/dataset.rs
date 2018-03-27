@@ -58,18 +58,18 @@ impl Dataset {
     }
 
     #[allow(dead_code)]
-    pub fn state(&self) -> &Option<model::PackageState> {
-        &self.state
+    pub fn state(&self) -> Option<&model::PackageState> {
+        self.state.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn description(&self) -> &Option<String> {
-        &self.description
+    pub fn description(&self) -> Option<&String> {
+        self.description.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> &Option<model::PackageType> {
-        &self.package_type
+    pub fn package_type(&self) -> Option<&model::PackageType> {
+        self.package_type.as_ref()
     }
 
     #[allow(dead_code)]

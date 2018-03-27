@@ -40,7 +40,7 @@ impl Channel {
         &self.channel_type
     }
 
-    pub fn group(&self) -> &Option<String> {
-        &self.group
+    pub fn group(&self) -> Option<&String> {
+        self.group.as_ref()
     }
 }

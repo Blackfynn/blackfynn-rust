@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use futures::*;
 
 use bf::{self, model};
+use bf::util::io::{byte_chunks, enumerate_byte_chunks};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportId(String);
@@ -86,7 +87,7 @@ impl S3File {
 
         // Get the full file path as a String:
         let file_name = file_path.file_name().and_then(|name| name.to_str())
-            .ok_or(bf::error::Error::InvalidUnicodePath(file_path.clone()))
+            .ok_or_else(|| bf::error::Error::InvalidUnicodePath(file_path.clone()))
             .map(String::from)?;
 
         // And the resulting metadata so we can pull the file size:
@@ -112,9 +113,9 @@ impl S3File {
     pub fn from_file_path<P: AsRef<Path>>(file_path: P) -> bf::Result<Self> {
         let file_path = file_path.as_ref();
         let path = file_path.parent()
-            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
+            .ok_or_else(|| bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
         let file = file_path.file_name()
-            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
+            .ok_or_else(|| bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not decompose: {:?}", file_path))))?;
         S3File::new(path, file)
     }
 
@@ -124,31 +125,51 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn upload_id(&self) -> &Option<UploadId> {
-        &self.upload_id
+    pub fn upload_id(&self) -> Option<&UploadId> {
+        self.upload_id.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn size(&self) -> &Option<u64> {
-        &self.size
+    pub fn size(&self) -> Option<u64> {
+        self.size
     }
 
     #[allow(dead_code)]
-    pub fn read_contents<P: AsRef<Path>>(&self, from_path: P) -> bf::Future<Vec<u8>> {
+    pub fn read_bytes<P: AsRef<Path>>(&self, from_path: P) -> bf::Future<Vec<u8>> {
         let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
         Box::new(future::lazy(move || {
             let f = match fs::File::open(file_path) {
                 Ok(f) => f,
                 Err(e) => return future::err(e.into())
             };
-            future::ok(f.bytes().filter_map(Result::ok).collect::<Vec<u8>>())
+            future::result(f.bytes()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into))
         }))
+    }
+
+    #[allow(dead_code)]
+    pub fn read_chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<Vec<u8>> {
+        let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
+        match fs::File::open(file_path) {
+            Ok(f) => Box::new(stream::iter_ok(byte_chunks(f, chunk_size))),
+            Err(e) => Box::new(stream::iter_result(Err(e)))
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn enumerate_chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<(usize, Vec<u8>)> {
+        let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
+        match fs::File::open(file_path) {
+            Ok(f) => Box::new(stream::iter_ok(enumerate_byte_chunks(f, chunk_size))),
+            Err(e) => Box::new(stream::iter_result(Err(e)))
+        }
     }
 }
 
 /// This serves as a minimal manifest.
 /// See `blackfynn-app/api/src/main/scala/com/blackfynn/uploads/Manifest.scala`
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
     append_to_package: Option<bool>,
@@ -170,38 +191,38 @@ pub struct Manifest {
 
 impl Manifest {
     #[allow(dead_code)]
-    pub fn append_to_package(&self) -> &Option<bool> {
-        &self.append_to_package
+    pub fn append_to_package(&self) -> Option<bool> {
+        self.append_to_package
     }
 
     #[allow(dead_code)]
-    pub fn bucket(&self) -> &Option<model::S3Bucket> {
-        &self.bucket
+    pub fn bucket(&self) -> Option<&model::S3Bucket> {
+        self.bucket.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn dataset(&self) -> &Option<model::DatasetId> {
-        &self.dataset
+    pub fn dataset(&self) -> Option<&model::DatasetId> {
+        self.dataset.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn email(&self) -> &Option<String> {
-        &self.email
+    pub fn email(&self) -> Option<&String> {
+        self.email.as_ref()
     }
 
     #[allow(dead_code)]
     pub fn files(&self) -> &Vec<String> {
-        &self.files
+        self.files.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn group_id(&self) -> &Option<String> {
-        &self.group_id
+    pub fn group_id(&self) -> Option<&String> {
+        self.group_id.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn import_id(&self) -> &Option<model::ImportId> {
-        &self.import_id
+    pub fn import_id(&self) -> Option<&model::ImportId> {
+        self.import_id.as_ref()
     }
 
     #[allow(dead_code)]

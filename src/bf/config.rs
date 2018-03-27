@@ -25,8 +25,7 @@ impl Environment {
         match *self {
             Local => {
                 let api_loc = env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
-                let url = api_loc.parse::<Url>().expect(&format!("Not a valid url: {}", api_loc));
-                url
+                api_loc.parse::<Url>().expect(&format!("Not a valid url: {}", api_loc))
             },
             Development => "https://dev.blackfynn.io"
                 .parse::<Url>()
