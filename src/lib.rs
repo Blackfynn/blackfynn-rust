@@ -8,6 +8,7 @@ extern crate hyper;
 extern crate hyper_tls;
 #[macro_use]
 extern crate lazy_static;
+extern crate rayon;
 extern crate rusoto_core;
 extern crate rusoto_credential;
 extern crate rusoto_s3;

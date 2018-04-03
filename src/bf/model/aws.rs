@@ -6,6 +6,18 @@ use bf::model;
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessKey(String);
 
+impl AsRef<String> for AccessKey {
+    fn as_ref(&self) -> &String {
+        &self.0
+    }
+}
+
+impl AsRef<str> for AccessKey {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl AccessKey {
     pub fn new(key: String) -> Self {
         AccessKey(key)
@@ -24,21 +36,21 @@ impl From<String> for AccessKey {
     }
 }
 
-impl AsRef<String> for AccessKey {
+/// A type representing an AWS S3 secret key.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretKey(String);
+
+impl AsRef<String> for SecretKey {
     fn as_ref(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for AccessKey {
+impl AsRef<str> for SecretKey {
     fn as_ref(&self) -> &str {
         self.0.as_str()
     }
 }
-
-/// A type representing an AWS S3 secret key.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecretKey(String);
 
 impl SecretKey {
     pub fn new(key: String) -> Self {
@@ -58,18 +70,6 @@ impl From<String> for SecretKey {
     }
 }
 
-impl AsRef<String> for SecretKey {
-    fn as_ref(&self) -> &String {
-        &self.0
-    }
-}
-
-impl AsRef<str> for SecretKey {
-    fn as_ref(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
 /// A type representing an AWS S3 bucket.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3Bucket(String);
@@ -77,18 +77,6 @@ pub struct S3Bucket(String);
 impl S3Bucket {
     pub fn new(s3_bucket: String) -> Self {
         S3Bucket(s3_bucket)
-    }
-}
-
-impl From<S3Bucket> for String {
-    fn from(s3_bucket: S3Bucket) -> Self {
-        s3_bucket.0
-    }
-}
-
-impl From<String> for S3Bucket {
-    fn from(s3_bucket: String) -> Self {
-        S3Bucket::new(s3_bucket)
     }
 }
 
@@ -101,6 +89,18 @@ impl AsRef<String> for S3Bucket {
 impl AsRef<str> for S3Bucket {
     fn as_ref(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl From<S3Bucket> for String {
+    fn from(s3_bucket: S3Bucket) -> Self {
+        s3_bucket.0
+    }
+}
+
+impl From<String> for S3Bucket {
+    fn from(s3_bucket: String) -> Self {
+        S3Bucket::new(s3_bucket)
     }
 }
 

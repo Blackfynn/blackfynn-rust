@@ -9,6 +9,14 @@ pub mod s3;
 pub use self::get::Get;
 pub use self::post::Post;
 pub use self::put::Put;
+pub use self::s3::{
+    MultipartUploadResult,
+    ProgressCallback,
+    ProgressUpdate,
+    UploadProgress,
+    UploadProgressIter,
+    S3Uploader
+};
 
 use std::path::Path;
 use std::cell::RefCell;
@@ -26,7 +34,6 @@ use serde_json;
 use tokio_core::reactor::{Core, Handle};
 
 use super::{request, response};
-use self::s3::S3Uploader;
 use bf;
 use bf::config::Config;
 use bf::model::{
@@ -78,13 +85,13 @@ trait Request<T>: Future<Item=T, Error=bf::error::Error> {
 // ============================================================================
 
 impl Blackfynn {
-    pub fn new(handle: &Handle, config: &Config) -> Self {
+    pub fn new(handle: &Handle, config: Config) -> Self {
         let http_client = Client::configure()
-            .connector(HttpsConnector::new(4, handle).unwrap())
+            .connector(HttpsConnector::new(4, handle).expect("Blackfynn API :: couldn't create https connector"))
             .build(handle);
         Self {
             inner: Rc::new(RefCell::new(BlackFynnImpl {
-                config: config.clone(),
+                config,
                 http_client,
                 session_token: None,
                 current_organization: None
@@ -141,7 +148,7 @@ impl Blackfynn {
 
         let f = bf.join4(url, body, maybe_token)
             .and_then(move |(bf, url, body, token): (Blackfynn, hyper::Uri, Option<String>, Option<SessionToken>)| {
-                let uri = url.to_string().parse::<hyper::Uri>().unwrap();
+                let uri = url.to_string().parse::<hyper::Uri>()?;
                 let mut req = hyper::Request::new(method.clone(), uri);
                 // If a body was provided, set it in the outgoing request:
                 if let Some(b) = body {
@@ -211,7 +218,7 @@ impl Blackfynn {
     ///  }
     ///  ```
     ///
-    pub fn run<F, T>(config: &Config, runner: F) -> bf::Result<T>
+    pub fn run<F, T>(config: Config, runner: F) -> bf::Result<T>
         where
             F: Fn(Blackfynn) -> bf::Future<T>
     {
@@ -241,7 +248,7 @@ impl Blackfynn {
     ///   }
     ///   ```
     ///
-    pub fn run_with_core<F, T>(core: &mut Core, config: &Config, runner: F) -> bf::Result<T>
+    pub fn run_with_core<F, T>(core: &mut Core, config: Config, runner: F) -> bf::Result<T>
         where
             F: Fn(Blackfynn) -> bf::Future<T>
     {
@@ -354,15 +361,14 @@ impl Blackfynn {
               Q: AsRef<Path>
     {
         // Parition the S3 files into two groups, successes and failures:
-        let (good, bad): (Vec<_>, Vec<_>) = files.into_iter().map(|file| model::S3File::new(path.as_ref(), file.as_ref())).partition(Result::is_ok);
+        let results = files.into_iter()
+            .map(|file| model::S3File::new(path.as_ref(), file.as_ref()))
+            .collect::<Result<Vec<_>, _>>();
 
-        // If a failure occurred, return immediately:
-        let mut errs: Vec<bf::error::Error> = bad.into_iter().map(Result::unwrap_err).collect();
-        if let Some(err) = errs.pop() {
-            return into_future_trait(future::err(err));
-        }
-
-        let s3_files: Vec<model::S3File> = good.into_iter().map(Result::unwrap).collect();
+        let s3_files = match results {
+            Ok(good) => good,
+            Err(e) => return into_future_trait(future::err(e))
+        };
 
         into_future_trait(Post::new(self, "/files/upload/preview")
                  .param("append", if append { "true" } else { "false" })
@@ -399,22 +405,16 @@ mod tests {
     extern crate pbr;
 
     use super::*;
-    use std::{fs, time, thread};
+    use std::{cell, fs, time, thread};
     use std::fmt::Debug;
 
-    use tokio_core::reactor::{Core};
+    use tokio_core::reactor::Core;
 
-    use self::pbr::ProgressBar;
+    //use self::pbr::ProgressBar;
 
-    use bf::api::client::s3::{S3_MIN_PART_SIZE, MultipartUploadResult};
-    use bf::config::{Environment};
-    use bf::util::futures::{into_future_trait, return2, return3};
-
-    #[allow(dead_code)]
-    const KB: u64 = 1024;
-    #[allow(dead_code)]
-    const MB: u64 = KB * KB;
-    const DEFAULT_CHUNK_SIZE: u64 = S3_MIN_PART_SIZE;
+    use bf::api::client::s3::MultipartUploadResult;
+    use bf::config::Environment;
+    use bf::util::futures::into_future_trait;
 
     const TEST_ENVIRONMENT: Environment = Environment::Development;
     const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
@@ -444,7 +444,7 @@ mod tests {
     fn create_bf_client() -> (Blackfynn, Core) {
         let core = Core::new().expect("couldn't create tokio core");
         let handle = core.handle();
-        let bf = Blackfynn::new(&handle, &*CONFIG);
+        let bf = Blackfynn::new(&handle, (*CONFIG).clone());
         (bf, core)
     }
 
@@ -489,12 +489,10 @@ mod tests {
 
     #[test]
     fn fetching_organizations_after_login_is_successful() {
-        let org = Blackfynn::run(&*CONFIG, move |bf| {
+        let org = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.organizations()
-                })
+                .and_then(move |_| bf.organizations())
             )
         });
         assert!(org.is_ok());
@@ -502,12 +500,10 @@ mod tests {
 
     #[test]
     fn fetching_user_after_login_is_successful() {
-        let user = Blackfynn::run(&*CONFIG, move |bf| {
+        let user = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.get_user()
-                })
+                .and_then(move |_| bf.get_user())
             )
         });
         assert!(user.is_ok());
@@ -515,20 +511,15 @@ mod tests {
 
     #[test]
     fn updating_org_after_login_is_successful() {
-        let user = Blackfynn::run(&*CONFIG, move |bf| {
+        let user = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    return2(bf.get_user(), future::ok(bf))
-                })
+                .and_then(move |_| bf.get_user().map(|user| (user, bf)))
                 .and_then(move |(user, bf)| {
                     let org = user.preferred_organization().clone();
-                    return2(
-                        bf.set_preferred_organization(org.cloned()),
-                        future::ok(bf)
-                    )
+                    bf.set_preferred_organization(org.cloned()).map(|_| bf)
                 })
-                .and_then(move |(_, bf)| bf.get_user())
+                .and_then(move |bf| bf.get_user())
             )
         });
         assert!(user.is_ok());
@@ -536,12 +527,10 @@ mod tests {
 
     #[test]
     fn fetching_organizations_fails_if_login_fails() {
-        let org = Blackfynn::run(&*CONFIG, move |bf| {
+        let org = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, "another-bad-secret")
-                .and_then(move |_| {
-                    bf.organizations()
-                })
+                .and_then(move |_| bf.organizations())
             )
         });
         assert!(org.is_err());
@@ -549,12 +538,10 @@ mod tests {
 
     #[test]
     fn fetching_organization_by_id_is_successful() {
-        let org = Blackfynn::run(&*CONFIG, move |bf| {
+        let org = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
-                })
+                .and_then(move |_| bf.organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION)))
             )
         });
         assert!(org.is_ok());
@@ -562,12 +549,10 @@ mod tests {
 
     #[test]
     fn fetching_datasets_after_login_is_successful() {
-        let ds = Blackfynn::run(&*CONFIG, move |bf| {
+        let ds = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.datasets()
-                })
+                .and_then(move |_| bf.datasets())
             )
         });
         assert!(ds.is_ok());
@@ -575,23 +560,18 @@ mod tests {
 
     #[test]
     fn fetching_datasets_fails_if_login_fails() {
-        let ds = Blackfynn::run(&*CONFIG, move |bf| {
-            into_future_trait(
-                bf.datasets()
-            )
+        let ds = Blackfynn::run((*CONFIG).clone(), move |bf| {
+            into_future_trait(bf.datasets())
         });
         assert!(ds.is_err());
     }
 
     #[test]
     fn fetching_dataset_by_id_successful_if_logged_in_and_exists() {
-        let ds = Blackfynn::run(&*CONFIG, move |bf| {
+        let ds = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .map_err(|e| {println!("{:#?}", e); e})
-                .and_then(move |_| {
-                    bf.dataset_by_id(DatasetId::new(FIXTURE_DATASET))
-                })
+                .and_then(move |_| bf.dataset_by_id(DatasetId::new(FIXTURE_DATASET)))
             )
         });
         assert!(ds.is_ok());
@@ -599,13 +579,10 @@ mod tests {
 
     #[test]
     fn fetching_package_by_id_successful_if_logged_in_and_exists() {
-        let package = Blackfynn::run(&*CONFIG, move |bf| {
+        let package = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .map_err(|e| {println!("{:#?}", e); e})
-                .and_then(move |_| {
-                    bf.package_by_id(PackageId::new(FIXTURE_PACKAGE))
-                })
+                .and_then(move |_| bf.package_by_id(PackageId::new(FIXTURE_PACKAGE)))
             )
         });
         assert!(package.is_ok());
@@ -617,7 +594,6 @@ mod tests {
         let package = Blackfynn::run(config, move |bf| {
             Box::new(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .map_err(|e| {println!("{:#?}", e); e})
                 .and_then(move |_| {
                     bf.package_by_id(PackageId::new("invalid_package_id"))
                 })
@@ -635,12 +611,10 @@ mod tests {
 
     #[test]
     fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
-        let ds = Blackfynn::run(&*CONFIG, move |bf| {
+        let ds = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.dataset_by_id(DatasetId::new("N:dataset:not-real-6803-4a67-bf20-83076774a5c7"))
-                })
+                .and_then(move |_| bf.dataset_by_id(DatasetId::new("N:dataset:not-real-6803-4a67-bf20-83076774a5c7")))
             )
         });
         assert!(ds.is_err());
@@ -648,12 +622,10 @@ mod tests {
 
     #[test]
     fn fetching_upload_credential_granting_works() {
-        let cred = Blackfynn::run(&*CONFIG, move |bf| {
+        let cred = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.grant_upload(DatasetId::new(FIXTURE_DATASET))
-                })
+                .and_then(move |_| bf.grant_upload(DatasetId::new(FIXTURE_DATASET)))
             )
         });
         assert!(cred.is_ok());
@@ -661,12 +633,10 @@ mod tests {
 
     #[test]
     fn preview_upload_file_working() {
-        let preview = Blackfynn::run(&*CONFIG, move |bf| {
+        let preview = Blackfynn::run((*CONFIG).clone(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false)
-                })
+                .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false))
             )
         });
         assert!(preview.is_ok());
@@ -689,35 +659,16 @@ mod tests {
 
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_login_response| {
-                    return2(
-                        bf.grant_upload(dataset_id.clone()),
-                        future::ok(bf)
-                    )
-                    .and_then(move |(upload_credential, bf)| {
-                        return3(
-                            bf.preview_upload(test_path, &test_files, false),
-                            future::ok(upload_credential),
-                            future::ok(bf)
-                        )
-                    })
-                    .and_then(move |(preview_package, upload_credential, bf)| {
-                        return2(
-                            future::ok(UploadScaffold {
-                                preview_package,
-                                upload_credential
-                            }),
-                            future::ok(bf)
-                        )
-                    })
-                })
+                .and_then(move |_| bf.grant_upload(dataset_id.clone()).map(|cred| (cred, bf)))
+                .and_then(move |(creds, bf)| bf.preview_upload(test_path, &test_files, false).map(|preview| (preview, creds, bf)))
+                .and_then(|(p, c, bf)| future::ok(UploadScaffold { preview_package: p, upload_credential: c }).join(future::ok(bf)))
             )
         })
     }
 
     #[test]
     fn simple_file_uploading() {
-        let result = Blackfynn::run(&*CONFIG, move |bf| {
+        let result = Blackfynn::run((*CONFIG).clone(), move |bf| {
             let dataset_id = (&*TEST_DATASET).clone();
             let f = create_upload_scaffold((&*TEST_DATA_DIR).to_owned(), (&*TEST_FILES).to_vec(), dataset_id.clone())(bf)
                 .and_then(move |(scaffold, bf)| {
@@ -725,10 +676,10 @@ mod tests {
                     let upload_credential = scaffold.upload_credential.clone();
                     stream::futures_unordered(scaffold.preview_package.packages.into_iter().map(move |package| {
                         // Simple, non-multipart uploading:
-                        uploader.upload(&*TEST_DATA_DIR,
-                                        package.files(),
-                                        package.import_id(),
-                                        &upload_credential.clone().into())
+                        uploader.put_objects(&*TEST_DATA_DIR,
+                                             package.files(),
+                                             package.import_id(),
+                                             &upload_credential.clone().into())
                     }))
                     .map(move |import_id| bf.complete_upload(&import_id, &dataset_id, None, false))
                     .collect()
@@ -751,7 +702,7 @@ mod tests {
 
     #[test]
     fn multipart_file_uploading() {
-        let result = Blackfynn::run(&*CONFIG, move |bf| {
+        let result = Blackfynn::run((*CONFIG).clone(), move |bf| {
             let dataset_id = (&*TEST_DATASET).clone();
 
             let f = create_upload_scaffold((&*TEST_DATA_DIR).to_owned(), (&*TEST_FILES).to_vec(), dataset_id.clone())(bf)
@@ -759,7 +710,7 @@ mod tests {
                     let upload_credential = scaffold.upload_credential.clone();
                     let uploader = bf.s3_uploader(&upload_credential.as_ref().temp_credentials());
                     stream::iter_ok::<_, bf::error::Error>(scaffold.preview_package.packages.into_iter().map(move |package| {
-                        uploader.multipart_upload_files(&*TEST_DATA_DIR, package.files(), &package.import_id(), &upload_credential.clone().into(), DEFAULT_CHUNK_SIZE)
+                        uploader.multipart_upload_files(&*TEST_DATA_DIR, package.files(), &package.import_id(), &upload_credential.clone().into())
                     }))
                     .flatten()
                     .filter_map(move |result| {
@@ -770,9 +721,7 @@ mod tests {
                     })
                     .collect()
                 })
-                .and_then(|fs| {
-                    stream::futures_unordered(fs).collect()
-                });
+                .and_then(|fs| stream::futures_unordered(fs).collect());
 
             into_future_trait(f)
         });
@@ -795,26 +744,58 @@ mod tests {
 
     #[test]
     fn multipart_big_file_uploading() {
-        let result = Blackfynn::run(&*CONFIG, move |bf| {
+        #[derive(Clone)]
+        struct ProgressIndicator(cell::Cell<bool>);
+
+        impl ProgressIndicator {
+            pub fn new() -> Self {
+                ProgressIndicator(cell::Cell::new(false))
+            }
+
+            pub fn called(&self) -> bool {
+                self.0.get()
+            }
+        }
+
+        impl ProgressCallback for Rc<ProgressIndicator> {
+            fn update(&self, _update: &ProgressUpdate) {
+                self.0.set(true);
+            }
+        }
+
+        use std::rc::Rc;
+
+        let cb = Rc::new(ProgressIndicator::new());
+
+        let result = Blackfynn::run((*CONFIG).clone(), |bf| {
             let dataset_id = (&*TEST_DATASET).clone();
+            let cb = Rc::clone(&cb);
+
             let f = create_upload_scaffold((&*BIG_TEST_DATA_DIR).to_owned(), (&*BIG_TEST_FILES).to_vec(), dataset_id.clone())(bf)
-                .and_then(move |(scaffold, bf)| {
+                .and_then(|(scaffold, bf)| {
 
                     let cred = scaffold.upload_credential.clone();
                     let mut uploader = bf.s3_uploader(&cred.as_ref().temp_credentials());
 
                     // Check the progress of the upload by polling every 1s:
-                    if let Ok(mut poller) = uploader.poll_uploads() {
+                    if let Ok(mut indicator) = uploader.progress() {
                         thread::spawn(move || {
                             loop {
                                 thread::sleep(time::Duration::from_millis(1000));
-                                poller.poll();
+                                for (file, update) in &mut indicator {
+                                    println!("{:?} => {}%", file, update.percent_done());
+                                }
                             }
                         });
                     }
 
                     stream::iter_ok::<_, bf::error::Error>(scaffold.preview_package.packages.into_iter().map(move |package| {
-                        uploader.multipart_upload_files(&*BIG_TEST_DATA_DIR, package.files(), &package.import_id(), &cred.clone().into(), DEFAULT_CHUNK_SIZE)
+                        let cb = Rc::clone(&cb);
+                        uploader.multipart_upload_files_cb(&*BIG_TEST_DATA_DIR,
+                                                           package.files(),
+                                                           &package.import_id(),
+                                                           &cred.clone().into(),
+                                                           cb)
                     }))
                     .flatten()
                     .map(move |result| {
@@ -838,16 +819,15 @@ mod tests {
                     })
                     .collect()
                 })
-                .and_then(|fs| {
-                    stream::futures_unordered(fs).collect()
-                });
+                .and_then(|fs| stream::futures_unordered(fs).collect());
             into_future_trait(f)
         });
 
         //println!("{:#?}", result);
         assert!(result.is_ok());
+        assert!(cb.called());
         let manifests = result.unwrap();
-        assert!(manifests.len() == TEST_FILES.len());
+        assert!(manifests.len() == BIG_TEST_FILES.len());
         for entry in manifests {
             match entry {
                 UploadStatus::Completed(_) => assert!(true),

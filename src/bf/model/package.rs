@@ -35,6 +35,12 @@ impl From<PackageId> for String {
     }
 }
 
+impl From<String> for PackageId {
+    fn from(id: String) -> Self {
+        PackageId::new(id)
+    }
+}
+
 /// A type encoding a package's processing state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]

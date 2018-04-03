@@ -1,22 +1,16 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use futures::*;
 
 use bf::{self, model};
-use bf::util::io::{byte_chunks, enumerate_byte_chunks};
+use bf::util::futures::into_stream_trait;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportId(String);
-
-impl From<ImportId> for String {
-    fn from(id: ImportId) -> String {
-        id.0
-    }
-}
 
 impl ImportId {
     #[allow(dead_code)]
@@ -34,6 +28,18 @@ impl AsRef<String> for ImportId {
 impl AsRef<str> for ImportId {
     fn as_ref(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl From<ImportId> for String {
+    fn from(id: ImportId) -> String {
+        id.0
+    }
+}
+
+impl From<String> for ImportId {
+    fn from(id: String) -> Self {
+        ImportId::new(id)
     }
 }
 
@@ -58,13 +64,55 @@ impl From<UploadId> for i64 {
     }
 }
 
+// /// A type representing a chunk of an S3 file.
+pub struct S3FileChunk {
+    handle: fs::File,
+    file_size: u64,
+    chunk_size: u64,
+    index: u64
+}
+
+impl S3FileChunk {
+    pub fn new<P: AsRef<Path>>(path: P, file_size: u64, chunk_size: u64, index: u64) -> bf::Result<S3FileChunk> {
+        let handle = fs::File::open(path)?;
+        Ok(S3FileChunk {
+            handle,
+            file_size,
+            chunk_size,
+            index
+        })
+    }
+
+    pub fn read(&mut self) -> bf::Result<Vec<u8>> {
+        let offset = self.chunk_size * self.index;
+        assert!(offset <= self.file_size);
+        let read_amount = self.file_size - offset;
+        let n = if read_amount > self.chunk_size { self.chunk_size } else { read_amount } as usize;
+        //let mut buf = vec![0u8; n];
+        let mut buf = Vec::with_capacity(n);
+        unsafe {
+            buf.set_len(n);
+        }
+
+        self.handle.seek(SeekFrom::Start(offset))?;
+        self.handle.read_exact(buf.as_mut_slice())?;
+        Ok(buf)
+    }
+
+    /// Returns the AWS S3 multipart file part number.
+    /// Note: S3 part numbers are 1-based.
+    pub fn part_number(&self) -> u64 {
+        self.index + 1
+    }
+}
+
 /// A type representing a file to be uploaded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3File {
     file_name: String,
     upload_id: Option<UploadId>,
-    size: Option<u64>
+    size: u64
 }
 
 impl S3File {
@@ -105,7 +153,7 @@ impl S3File {
             // plug in a dummy value to appease the API:
             upload_id: Some(UploadId(0)),
             file_name,
-            size: Some(metadata.len())
+            size: metadata.len()
         })
     }
 
@@ -130,7 +178,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn size(&self) -> Option<u64> {
+    pub fn size(&self) -> u64 {
         self.size
     }
 
@@ -148,21 +196,16 @@ impl S3File {
         }))
     }
 
-    #[allow(dead_code)]
-    pub fn read_chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<Vec<u8>> {
-        let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
-        match fs::File::open(file_path) {
-            Ok(f) => Box::new(stream::iter_ok(byte_chunks(f, chunk_size))),
-            Err(e) => Box::new(stream::iter_result(Err(e)))
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn enumerate_chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<(usize, Vec<u8>)> {
-        let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
-        match fs::File::open(file_path) {
-            Ok(f) => Box::new(stream::iter_ok(enumerate_byte_chunks(f, chunk_size))),
-            Err(e) => Box::new(stream::iter_result(Err(e)))
+    pub fn chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<S3FileChunk> {
+        let file_path = from_path.as_ref().join(self.file_name.clone());
+        let size = self.size();
+        let nchunks = (size as f64 / chunk_size as f64).ceil() as u64;
+        let chunks = (0 .. nchunks)
+            .map(move |part_number| S3FileChunk::new(file_path.clone(), size, chunk_size, part_number))
+            .collect::<Result<Vec<_>, _>>();
+        match chunks {
+            Ok(ch) => into_stream_trait(stream::iter_ok(ch)),
+            Err(e) => into_stream_trait(stream::once(Err(e)))
         }
     }
 }

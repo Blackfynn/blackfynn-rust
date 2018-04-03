@@ -34,44 +34,6 @@ impl <R: Read> Iterator for ByteChunks<R> {
     }
 }
 
-/// Like `byte_chunks`, but returns the part number of the chunk as well.
-pub fn enumerate_byte_chunks<R: Read>(readable: R, chunk_size: u64) -> ByteChunksEnumerate<R> {
-    ByteChunksEnumerate {
-        byte_stream: readable.bytes(),
-        chunk_size,
-        index: 1
-    }
-}
-
-/// An iterator to over byte chunks of a file.
-pub struct ByteChunksEnumerate<R> {
-    byte_stream: Bytes<R>,
-    chunk_size: u64,
-    index: usize,
-}
-
-impl <R: Read> Iterator for ByteChunksEnumerate<R> {
-    type Item = (usize, Vec<u8>);
-
-    // See http://xion.io/post/code/rust-iter-patterns.html for turning
-    // `Vec<Result<u8, Error>>` to `Result<Vec<u8>, Error>`
-    fn next(&mut self) -> Option<Self::Item> {
-        self.byte_stream
-            .by_ref()
-            .take(self.chunk_size as usize)
-            .collect::<Result<Vec<_>, _>>()
-            .ok()
-            .and_then(|bytes| {
-                if bytes.is_empty() {
-                    return None
-                }
-                let ret = Some((self.index, bytes));
-                self.index += 1;
-                ret
-            })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

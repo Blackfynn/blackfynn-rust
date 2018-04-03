@@ -22,6 +22,12 @@ impl AsRef<str> for SessionToken {
     }
 }
 
+impl From<String> for SessionToken {
+    fn from(token: String) -> Self {
+        SessionToken::new(token)
+    }
+}
+
 impl From<SessionToken> for String {
     fn from(token: SessionToken) -> Self {
         token.0
