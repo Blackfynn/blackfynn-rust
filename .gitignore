@@ -13,4 +13,5 @@ Cargo.lock
 **/*.rs.bk
 Cargo.lock
 
+.DS_Store
 /test/data/big/*

@@ -2,10 +2,9 @@
 
 //! AWS S3-specific functionality lives here.
 
-use std::collections::HashMap;
-use std::cell::Cell;
-use std::f32;
 use std::iter;
+use std::collections::hash_map;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Sender, Receiver};
@@ -38,6 +37,7 @@ use bf::util::futures::{into_future_trait, into_stream_trait};
 
 const KB: u64 = 1024;
 const MB: u64 = KB * KB;
+const DEFAULT_CONCURRENCY_LIMIT: usize = 4;
 
 /// The smallest part size (chunk) for a multipart upload allowed by AWS.
 pub const S3_MIN_PART_SIZE: u64 = 5 * MB;
@@ -79,7 +79,7 @@ impl MultipartUploadResult {
 }
 
 /// An abstration of an active multipart upload to AWS S3.
-pub struct MultipartUploadFile {
+struct MultipartUploadFile {
     s3_client: Rc<S3Client<StaticProvider>>,
     file: S3File,
     import_id: ImportId,
@@ -91,17 +91,12 @@ pub struct MultipartUploadFile {
     concurrent_limit: Cell<usize>,
     bytes_sent: Rc<Cell<u64>>,
     total_bytes_requested: Cell<u64>,
-    tx_bytes: Sender<ProgressUpdate>
+    tx_progress: Sender<ProgressUpdate>,
+    cb: Rc<Box<ProgressCallback>>
 }
 
-// impl Drop for MultipartUploadFile {
-//     fn drop(&mut self) {
-//         println!("Dropped MultipartUploadFile");
-//     }
-// }
-
 impl MultipartUploadFile {
-    pub fn new(s3_client: &Rc<S3Client<StaticProvider>>,
+    pub fn new<C>(s3_client: &Rc<S3Client<StaticProvider>>,
                file: S3File,
                import_id: ImportId,
                upload_id: Option<S3UploadId>,
@@ -109,7 +104,9 @@ impl MultipartUploadFile {
                bucket: S3Bucket,
                key: S3Key,
                server_side_encryption: S3ServerSideEncryption,
-               tx_bytes: Sender<ProgressUpdate>) -> Self
+               tx_progress: Sender<ProgressUpdate>,
+               cb: C) -> Self
+        where C: 'static + ProgressCallback
     {
         Self {
             s3_client: Rc::clone(s3_client),
@@ -120,54 +117,64 @@ impl MultipartUploadFile {
             bucket,
             key,
             server_side_encryption,
-            concurrent_limit: Cell::new(3),
+            concurrent_limit: Cell::new(DEFAULT_CONCURRENCY_LIMIT),
             bytes_sent: Rc::new(Cell::new(0)),
             total_bytes_requested: Cell::new(0),
-            tx_bytes
+            tx_progress,
+            cb: Rc::new(Box::new(cb))
         }
     }
 
     /// Returns the Blackfynn import ID that the upload is part of.
+    #[allow(dead_code)]
     pub fn import_id(&self) -> &ImportId {
         &self.import_id
     }
 
     /// Returns the AWS multipart upload ID this file upload is associated with.
+    #[allow(dead_code)]
     pub fn upload_id(&self) -> Option<&S3UploadId> {
         self.upload_id.as_ref()
     }
 
     /// Returns the name of the file being uploaded.
+    #[allow(dead_code)]
     pub fn file_name(&self) -> &String {
         self.file.file_name()
     }
 
     /// Returns the size of the file in bytes.
-    pub fn file_size(&self) -> Option<u64> {
+    #[allow(dead_code)]
+    pub fn file_size(&self) -> u64 {
         self.file.size()
     }
 
     /// Returns the AWS bucket the file is to be uploaded to.
+    #[allow(dead_code)]
     pub fn bucket(&self) -> &S3Bucket {
         &self.bucket
     }
 
     /// Returns the AWS key the uploaded file is stored under.
+    #[allow(dead_code)]
     pub fn key(&self) -> &S3Key {
         &self.key
     }
 
     /// Returns the server side encryption scheme that is being used by AWS.
+    #[allow(dead_code)]
     pub fn server_side_encryption(&self) -> &S3ServerSideEncryption {
         &self.server_side_encryption
     }
 
     /// Returns the file chunk size in bytes that is being used for the file.
+    #[allow(dead_code)]
     pub fn file_chunk_size(&self) -> u64 {
         self.file_chunk_size
     }
 
     /// Returns the cumulative number of bytes sent to AWS S3.
+    #[allow(dead_code)]
     pub fn bytes_sent(&self) -> u64 {
         self.bytes_sent.get()
     }
@@ -175,49 +182,47 @@ impl MultipartUploadFile {
     /// Returns the total number of bytes to be sent to AWS across all
     /// pending file uploads. Every time `upload_file` is called, this value
     /// is incremented with the size of the supplied file.
+    #[allow(dead_code)]
     pub fn total_bytes_requested(&self) -> u64 {
         self.total_bytes_requested.get()
     }
 
-    /// Returns the file upload concurrency limit.
-    pub fn concurrent_limit(&self) -> usize {
-        self.concurrent_limit.get()
-    }
-
-    /// Sets the file upload concurrency limit.
-    pub fn set_concurrent_limit(&self, limit: usize) -> &Self {
-        self.concurrent_limit.set(limit);
-        self
-    }
-
-    /// Uploads a file to AWS S3.
-    pub fn upload<P>(&self, path: P) -> bf::Stream<rusoto_s3::CompletedPart>
+    /// Uploads a file's parts to an AWS S3 bucket.
+    pub fn upload_parts<P>(&self, path: P) -> bf::Stream<rusoto_s3::CompletedPart>
         where P: AsRef<Path>
     {
-
         if let Some(upload_id) = self.upload_id.clone() {
 
-            let file_name = self.file_name().clone();
+            let cb = Rc::clone(&self.cb);
+            let import_id = self.import_id().clone();
+            let file_path = path.as_ref().to_path_buf().join(self.file_name());
             let file_size = self.file_size();
             let s3_client = Rc::clone(&self.s3_client);
             let s3_bucket: model::S3Bucket = self.bucket().clone();
             let s3_key: model::S3Key = self.key().clone();
-            let concurrent_limit = self.concurrent_limit();
+            let concurrent_limit = self.concurrent_limit.get();
 
-            // Chunk the file into chunks of size `file_chunk_size`:
+            // Divide the file into chunks of size `file_chunk_size`:
             let bytes_sent = Rc::clone(&self.bytes_sent);
-            let tx_bytes = self.tx_bytes.clone();
+            let tx_progress = self.tx_progress.clone();
 
             // Bump up the total number of bytes requested for upload with
             // the included file size:
-            self.total_bytes_requested.replace(self.total_bytes_requested.get() + self.file.size().unwrap_or(0));
+            self.total_bytes_requested.replace(self.total_bytes_requested.get() + self.file.size());
 
-            let f = self.file.enumerate_chunks(path.as_ref(), self.file_chunk_size())
-                .map(move |(part_number, chunk)| {
-                    let n = chunk.len();
+            let f = self.file.chunks(path.as_ref(), self.file_chunk_size())
+                //.fuse()
+                .map(move |mut chunk| {
+                    let bytes = match chunk.read() {
+                        Ok(bytes) => bytes,
+                        Err(e) => return into_future_trait(future::err(e))
+                    };
+                    let n = bytes.len();
+                    let part_number = chunk.part_number();
                     let bytes_sent = Rc::clone(&bytes_sent);
+
                     let request = rusoto_s3::UploadPartRequest {
-                        body: Some(chunk),
+                        body: Some(bytes),
                         bucket: s3_bucket.clone().into(),
                         content_length: Some(n as i64),
                         key: s3_key.clone().into(),
@@ -226,26 +231,41 @@ impl MultipartUploadFile {
                         .. Default::default()
                     };
 
-                    let tx_bytes = tx_bytes.clone();
-                    let file_name = file_name.clone();
+                    let cb = Rc::clone(&cb);
 
-                    s3_client.upload_part(&request)
-                        .join(future::ok(part_number))
-                        .map_err(Into::into)
-                        .and_then(move |(part_output, part_number)| {
-                            // Update the sent byte count and signal that fact.
-                            // If there's a send error, ignore it:
-                            bytes_sent.replace(bytes_sent.get() + (n as u64));
+                    let tx_progress = tx_progress.clone();
+                    let s3_client = Rc::clone(&s3_client);
+                    let file_path = file_path.clone();
+                    let import_id = import_id.clone();
 
-                            let _ = tx_bytes.send(ProgressUpdate(part_number, file_name, bytes_sent.get(), file_size));
+                    let f = future::lazy(move || {
+                        s3_client.upload_part(&request)
+                            .map(move |output| (output, part_number, cb ))
+                            .map_err(Into::into)
+                            .and_then(move |(part_output, part_number, cb )| {
+                                // Update the sent byte count and signal the fact.
+                                // If there's a send error, ignore it:
+                                bytes_sent.replace(bytes_sent.get() + (n as u64));
 
-                            // Note: parts may (read: will) complete out of order.
-                            // They will be sorted later, as required by S3.
-                            Ok(rusoto_s3::CompletedPart {
-                                e_tag: part_output.e_tag,
-                                part_number: Some(part_number as i64)
+                                let update = ProgressUpdate::new(part_number as usize, import_id, file_path, bytes_sent.get(), file_size);
+
+                                // Call the provided progress callback with the update:
+                                cb.update(&update);
+
+                                // and send the actual update information to the progress update
+                                // channel:
+                                let _ = tx_progress.send(update);
+
+                                // Note: parts may (read: will) complete out of order.
+                                // They will be sorted later, as required by S3.
+                                Ok(rusoto_s3::CompletedPart {
+                                    e_tag: part_output.e_tag,
+                                    part_number: Some(part_number as i64)
+                                })
                             })
-                        })
+                    });
+
+                    into_future_trait(f)
                 })
                 .buffer_unordered(concurrent_limit);
 
@@ -300,69 +320,133 @@ impl MultipartUploadFile {
     }
 }
 
+/// A trait defining a progress indicator callback. Every time a file part
+/// successfully completes, `update` will be called with new, update statistics
+/// for the file.
+pub trait ProgressCallback {
+    fn update(&self, &ProgressUpdate);
+}
+
+/// An implementation of `ProgressCallback` that does nothing.
+#[derive(Debug, Clone, Hash)]
+struct NoProgress;
+
+impl ProgressCallback for NoProgress {
+    fn update(&self, _update: &ProgressUpdate) {
+        // Do nothing
+    }
+}
+
 /// A type representing progress updates for a multipart upload.
 #[derive(Debug, Clone, Hash)]
-pub struct ProgressUpdate(usize, String, u64, Option<u64>);
+pub struct ProgressUpdate {
+    part_number: usize,
+    import_id: ImportId,
+    file_path: PathBuf,
+    bytes_sent: u64,
+    size: u64
+}
 
 impl ProgressUpdate {
+    pub fn new(part_number: usize, import_id: ImportId, file_path: PathBuf, bytes_sent: u64, size: u64) -> Self {
+        Self {
+            part_number,
+            import_id,
+            file_path,
+            bytes_sent,
+            size
+        }
+    }
+
     /// Returns the S3 part number of the uploading file.
     pub fn part_number(&self) -> usize {
-        self.0
+        self.part_number
+    }
+
+    /// Returns the Blackfynn import ID the file is associated with.
+    pub fn import_id(&self) -> &ImportId {
+        &self.import_id
     }
 
     /// Returns the name, sans path, of the file being uploaded.
-    pub fn file_name(&self) -> &String {
-        &self.1
+    pub fn file_path(&self) -> &Path {
+        self.file_path.as_ref()
     }
 
     /// Returns the cumulative number of bytes sent to S3 for the given file.
     pub fn bytes_sent(&self) -> u64 {
-        self.2
+        self.bytes_sent
     }
 
-    /// Returns the total size of the file in bytes
-    pub fn size(&self) -> Option<u64> {
-        self.3
+    /// Returns the total size of the file in bytes.
+    pub fn size(&self) -> u64 {
+        self.size
     }
 
+    /// Returns the upload percentage completed.
     pub fn percent_done(&self) -> f32 {
-        match self.size() {
-            Some(size) => (self.bytes_sent() as f32 / size as f32) * 100.0,
-            None => f32::NAN
-        }
+        (self.bytes_sent() as f32 / self.size() as f32) * 100.0
     }
 }
 
 /// A type that tracks the progress of all file being uploaded to S3.
-pub struct PollUploads {
-    file_stats: HashMap<String, ProgressUpdate>,
-    rx_bytes: Receiver<ProgressUpdate>
+pub struct UploadProgress {
+    file_stats: hash_map::HashMap<PathBuf, ProgressUpdate>,
+    rx_progress: Receiver<ProgressUpdate>
 }
 
-impl PollUploads {
-    pub fn new(rx_bytes: Receiver<ProgressUpdate>) -> Self {
+/// An iterator over upload progress updates.
+pub struct UploadProgressIter<'a> {
+    #[allow(dead_code)]
+    iter: hash_map::Iter<'a, PathBuf, ProgressUpdate>
+}
+
+impl <'a> Iterator for UploadProgressIter<'a> {
+    type Item = (&'a Path, &'a ProgressUpdate);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(p, u)| (p.as_ref(), u))
+    }
+}
+
+impl <'a> IntoIterator for &'a mut UploadProgress {
+    type Item = (&'a Path, &'a ProgressUpdate);
+    type IntoIter = UploadProgressIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl UploadProgress {
+    pub fn new(rx_progress: Receiver<ProgressUpdate>) -> Self {
         Self {
-            file_stats: HashMap::new(),
-            rx_bytes
+            file_stats: hash_map::HashMap::new(),
+            rx_progress
         }
     }
 
-    pub fn poll(&mut self) {
-        while let Ok(update) = self.rx_bytes.try_recv() {
+    /// This updates the number of bytes written to S3 for each file being
+    /// uploaded. This function is non-blocking, and byte countes will _only_
+    /// be updated when this method is called.
+    pub fn update(&mut self) {
+        while let Ok(update) = self.rx_progress.try_recv() {
             let mut updated = false;
-            {
-                if let Some(stats) = self.file_stats.get_mut(update.file_name()) {
-                    *stats = update.clone();
-                    updated = true;
-                }
-            };
+            if let Some(stats) = self.file_stats.get_mut(update.file_path()) {
+                *stats = update.clone();
+                updated = true;
+            }
             if !updated {
-                self.file_stats.insert(update.file_name().to_string(), update);
+                self.file_stats.insert(update.file_path().to_owned(), update);
             }
         }
-        self.file_stats.iter().for_each(|(file, update)| {
-            println!("{} => {}%", file, update.percent_done());
-        });
+    }
+
+    pub fn iter(&mut self) -> UploadProgressIter {
+        self.update();
+        UploadProgressIter {
+            iter: self.file_stats.iter()
+        }
     }
 }
 
@@ -370,15 +454,10 @@ impl PollUploads {
 pub struct S3Uploader {
     server_side_encryption: S3ServerSideEncryption,
     s3_client: Rc<S3Client<StaticProvider>>,
-    tx_bytes: Sender<ProgressUpdate>,
-    rx_bytes: Option<Receiver<ProgressUpdate>>
+    tx_progress: Sender<ProgressUpdate>,
+    rx_progress: Option<Receiver<ProgressUpdate>>,
+    file_chunk_size: u64
 }
-
-// impl Drop for S3Uploader {
-//     fn drop(&mut self) {
-//
-//     }
-// }
 
 impl S3Uploader {
     pub fn new(server_side_encryption: S3ServerSideEncryption,
@@ -386,19 +465,27 @@ impl S3Uploader {
                secret_key: SecretKey,
                session_token: SessionToken) -> Self
     {
-        let (tx_bytes, rx_bytes) = channel::<ProgressUpdate>();
+        let (tx_progress, rx_progress) = channel::<ProgressUpdate>();
         Self {
             server_side_encryption,
             s3_client: Rc::new(create_s3_client(access_key, secret_key, session_token)),
-            tx_bytes,
-            rx_bytes: Some(rx_bytes)
+            tx_progress,
+            rx_progress: Some(rx_progress),
+            file_chunk_size: S3_MIN_PART_SIZE
         }
+    }
+
+    /// Set the file chunk size to be used when uploading to AWS S3.
+    pub fn set_file_chunk_size(&mut self, file_chunk_size: u64) -> &Self {
+        self.file_chunk_size = file_chunk_size;
+        self
     }
 
     /// Produces a `futures::stream::Stream`, where each entry represents a
     /// `futures::future::Future` that uploads the specified files to the
     /// Blackfynn S3 bucket.
-    pub fn upload<P>
+    #[allow(dead_code)]
+    pub fn put_objects<P>
         (&self, path: P, files: &[S3File], import_id: &ImportId, credentials: &UploadCredential) -> bf::Future<ImportId>
         where P: AsRef<Path>
     {
@@ -439,9 +526,9 @@ impl S3Uploader {
 
     /// Returns a file progress poller used to update and check the number
     /// of bytes sent to S3 for all files uploaded by this `S3Uploader` instance.
-    pub fn poll_uploads(&mut self) -> Result<PollUploads, ()> {
-        if let Some(rx_bytes) = self.rx_bytes.take() {
-            Ok(PollUploads::new(rx_bytes))
+    pub fn progress(&mut self) -> Result<UploadProgress, ()> {
+        if let Some(rx_progress) = self.rx_progress.take() {
+            Ok(UploadProgress::new(rx_progress))
         } else {
             Err(())
         }
@@ -449,8 +536,9 @@ impl S3Uploader {
 
     /// Initiates a multi-part file upload.
     /// TODO: implement retry
-    pub fn begin_multipart_upload
-        (&self, file: S3File, import_id: &ImportId, credentials: &UploadCredential, file_chunk_size: u64) -> bf::Future<MultipartUploadFile>
+    fn begin_multipart_upload<C>
+        (&self, file: S3File, import_id: &ImportId, credentials: &UploadCredential, cb: C) -> bf::Future<MultipartUploadFile>
+        where C: 'static + ProgressCallback
     {
         let s3_client = Rc::clone(&self.s3_client);
         let import_id = import_id.clone();
@@ -467,7 +555,8 @@ impl S3Uploader {
             .. Default::default()
         };
 
-        let tx_bytes = self.tx_bytes.clone();
+        let tx_progress = self.tx_progress.clone();
+        let file_chunk_size = self.file_chunk_size;
 
         let f = s3_client.create_multipart_upload(&request)
             .and_then(move |output: rusoto_s3::CreateMultipartUploadOutput| {
@@ -479,7 +568,8 @@ impl S3Uploader {
                                             s3_bucket,
                                             s3_key,
                                             s3_server_side_encryption,
-                                            tx_bytes))
+                                            tx_progress,
+                                            cb))
             })
             .map_err(Into::into);
 
@@ -487,17 +577,19 @@ impl S3Uploader {
     }
 
     /// Initiates a multi-part upload for a single file.
-    fn multipart_upload_file<P>
-        (&self, path: P, file: S3File, import_id: &ImportId, credentials: &UploadCredential, chunk_size: u64) -> bf::Future<MultipartUploadResult>
-        where P: 'static + AsRef<Path>
+    fn multipart_upload_file<C, P>
+        (&self, path: P, file: &S3File, import_id: &ImportId, credentials: &UploadCredential, cb: C) -> bf::Future<MultipartUploadResult>
+        where C: 'static + ProgressCallback,
+              P: 'static + AsRef<Path>
     {
         let file = file.clone();
         let import_id = import_id.clone();
 
-        let f = self.begin_multipart_upload(file, &import_id, credentials, chunk_size).join(future::ok(path))
-           .and_then(move |(multipart, path): (MultipartUploadFile, P)| {
+        let f = self.begin_multipart_upload(file, &import_id, credentials, cb)
+            .join(future::ok(path))
+            .and_then(move |(multipart, path): (MultipartUploadFile, P)| {
                 // Divide the file into parts of size `chunk_size`, and upload each part.
-                multipart.upload(path)
+                multipart.upload_parts(path)
                     .collect()
                     .then(move |result: bf::Result<Vec<rusoto_s3::CompletedPart>>| {
                         match result {
@@ -525,17 +617,27 @@ impl S3Uploader {
         into_future_trait(f)
     }
 
-    /// Initiates a multi-part upload for multiple files.
-    pub fn multipart_upload_files<P>
-        (&self, path: P, files: &[S3File], import_id: &ImportId, credentials: &UploadCredential, chunk_size: u64) -> bf::Stream<MultipartUploadResult>
-        where P: AsRef<Path>
+    /// Initiates a multi-part upload for multiple files with a progress indicator
+    /// callback.
+    pub fn multipart_upload_files_cb<C, P>
+        (&self, path: P, files: &[S3File], import_id: &ImportId, credentials: &UploadCredential, cb: C) -> bf::Stream<MultipartUploadResult>
+        where C: 'static + ProgressCallback + Clone,
+              P: 'static + AsRef<Path>
     {
         let futures = files.iter()
             .zip(iter::repeat(path.as_ref().to_path_buf()))
             .map(move |(file, path): (&S3File, PathBuf)| {
-                self.multipart_upload_file(path, file.clone(), import_id, &credentials.clone(), chunk_size)
+                self.multipart_upload_file(path, file, import_id, &credentials.clone(), cb.clone())
             });
 
         into_stream_trait(stream::futures_unordered(futures))
+    }
+
+    /// Initiates a multi-part upload for multiple files.
+    pub fn multipart_upload_files<P>
+        (&self, path: P, files: &[S3File], import_id: &ImportId, credentials: &UploadCredential) -> bf::Stream<MultipartUploadResult>
+        where P: 'static + AsRef<Path>
+    {
+        self.multipart_upload_files_cb(path, files, import_id, credentials, NoProgress)
     }
 }

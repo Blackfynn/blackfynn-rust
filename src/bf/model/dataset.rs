@@ -32,6 +32,12 @@ impl From<DatasetId> for String {
     }
 }
 
+impl From<String> for DatasetId {
+    fn from(id: String) -> Self {
+        DatasetId::new(id)
+    }
+}
+
 /// A typed representation of a Blackfynn API dataset
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

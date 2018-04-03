@@ -32,6 +32,12 @@ impl From<OrganizationId> for String {
     }
 }
 
+impl From<String> for OrganizationId {
+    fn from(id: String) -> Self {
+        OrganizationId::new(id)
+    }
+}
+
 /// An organization, as defined by the Blackfynn API
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
