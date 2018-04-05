@@ -31,7 +31,7 @@ impl Environment {
             Development => "https://dev.blackfynn.io"
                 .parse::<Url>()
                 .unwrap(), // This should never fail
-            Production => "https://app.blackfynn.io"
+            Production => "https://api.blackfynn.io"
                 .parse::<Url>()
                 .unwrap() // This should never fail
         }
