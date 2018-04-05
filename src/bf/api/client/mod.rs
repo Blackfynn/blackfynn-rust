@@ -218,40 +218,11 @@ impl Blackfynn {
     ///  }
     ///  ```
     ///
-    pub fn run<F, T>(config: Config, runner: F) -> bf::Result<T>
+    fn run<F, T>(config: Config, runner: F) -> bf::Result<T>
         where
             F: Fn(Blackfynn) -> bf::Future<T>
     {
         let mut core = Core::new().expect("couldn't create event loop");
-        Self::run_with_core(&mut core, config, runner)
-    }
-
-    #[allow(dead_code)]
-    ///
-    /// # Example
-    ///
-    ///   ```
-    ///   extern crate blackfynn;
-    ///   extern crate tokio_core;
-    ///
-    ///   fn main() {
-    ///     use blackfynn::{Blackfynn, Config, Environment};
-    ///     use tokio_core::reactor::Core;
-    ///
-    ///     let mut core = Core::new().unwrap();
-    ///     let config = Config::new(Environment::Development);
-    ///     let result = Blackfynn::run_with_core(&mut core, &config, move |ref bf| {
-    ///       // Not logged in
-    ///       Box::new(bf.organizations())
-    ///     });
-    ///     assert!(result.is_err());
-    ///   }
-    ///   ```
-    ///
-    pub fn run_with_core<F, T>(core: &mut Core, config: Config, runner: F) -> bf::Result<T>
-        where
-            F: Fn(Blackfynn) -> bf::Future<T>
-    {
         let handle = core.handle();
         let bf = Self::new(&handle, config);
         let future_to_run = runner(bf);
@@ -402,15 +373,11 @@ impl Blackfynn {
 
 #[cfg(test)]
 mod tests {
-    extern crate pbr;
-
     use super::*;
     use std::{cell, fs, time, thread};
     use std::fmt::Debug;
 
     use tokio_core::reactor::Core;
-
-    //use self::pbr::ProgressBar;
 
     use bf::api::client::s3::MultipartUploadResult;
     use bf::config::Environment;
