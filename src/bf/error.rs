@@ -14,7 +14,7 @@ use url;
 
 #[derive(Debug)]
 pub enum Error {
-    ApiError(String),
+    ApiError(hyper::StatusCode, String),
     HttpError(hyper::error::Error),
     InvalidUnicodePath(path::PathBuf),
     IoError(io::Error),
@@ -64,7 +64,7 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         use self::Error::*;
         match *self {
-            ApiError(_) => "api error",
+            ApiError(_, _) => "api error",
             HttpError(_) => "http error",
             InvalidUnicodePath(_) => "invalid unicode path",
             IoError(_) => "io error",
@@ -80,7 +80,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Error::*;
         match *self {
-            ApiError(ref message) => write!(f, "API error :: {}", message),
+            ApiError(status_code, ref message) => write!(f, "API error :: {} {}", status_code, message),
             HttpError(ref err) => write!(f, "HTTP error :: {}", err),
             InvalidUnicodePath(ref path) => write!(f, "Invalid unicode characters in path :: {:?}", path),
             IoError(ref err) => write!(f, "IO error :: {}", err),

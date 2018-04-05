@@ -167,7 +167,10 @@ impl Blackfynn {
                     })
                     .and_then(move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
                         if status_code.is_client_error() || status_code.is_server_error() {
-                            return future::err(bf::error::Error::ApiError(String::from_utf8_lossy(&body).to_string()));
+                            return future::err(bf::error::Error::ApiError(
+                                status_code,
+                                String::from_utf8_lossy(&body).to_string()
+                            ));
                         }
                         future::ok(body)
                     })
@@ -637,6 +640,28 @@ mod tests {
             )
         });
         assert!(package.is_ok());
+    }
+
+    #[test]
+    fn fetching_package_by_id_invalid_if_logged_in_and_exists() {
+        let config = Config::new(TEST_ENVIRONMENT);
+        let package = Blackfynn::run(config, move |bf| {
+            Box::new(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                .map_err(|e| {println!("{:#?}", e); e})
+                .and_then(move |_| {
+                    bf.package_by_id(PackageId::new("invalid_package_id"))
+                })
+            )
+        });
+
+        if let Err(e) = package {
+            match e {
+                // blackfynn api returns 403 in this case..it should really be 404 I think
+                bf::error::Error::ApiError(status, _) => assert_eq!(status.as_u16(), 403),
+                _ => assert!(false),
+            }
+        }
     }
 
     #[test]
