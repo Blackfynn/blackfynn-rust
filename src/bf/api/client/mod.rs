@@ -331,7 +331,6 @@ impl Blackfynn {
         where P: AsRef<Path>,
               Q: AsRef<Path>
     {
-        // Parition the S3 files into two groups, successes and failures:
         let results = files.into_iter()
             .map(|file| model::S3File::new(path.as_ref(), file.as_ref()))
             .collect::<Result<Vec<_>, _>>();
