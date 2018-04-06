@@ -7,9 +7,9 @@ pub mod config;
 pub mod error;
 pub mod model;
 pub mod types;
-pub mod util;
+mod util;
 
 // Re-export
-pub use bf::api::client::Blackfynn;
+pub use bf::api::Blackfynn;
 pub use bf::config::{Config, Environment};
 pub use bf::types::{Future, Stream, Result};

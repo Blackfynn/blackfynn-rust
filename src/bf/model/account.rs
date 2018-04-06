@@ -1,12 +1,17 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// A type representing a Blackfynn session token.
+/// A Blackfynn platform session token.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionToken(String);
 
 impl SessionToken {
     pub fn new(token: String) -> Self {
         SessionToken(token)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 

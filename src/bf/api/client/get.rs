@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use std::cell::Cell;
 
 use futures::*;
@@ -9,6 +11,17 @@ use serde;
 use bf;
 use bf::api::client::{Blackfynn, Nothing, Request};
 
+/// An abstraction of an HTTP `GET` request.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// Get::new(self, format!("/organizations/{id}", id=Into::<String>::into(id)))
+/// ```
+///
+/// ```rust,ignore
+/// Get::new(self, format!("/security/user/credentials/upload/{dataset}", dataset=Into::<String>::into(dataset_id))
+/// ```
 pub struct Get<T> {
     bf: Blackfynn,
     route: String,

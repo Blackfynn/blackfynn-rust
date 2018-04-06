@@ -2,7 +2,7 @@
 
 use bf::model;
 
-/// A type representing an API response containing a file
+/// A response wrapping a `model::File`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {

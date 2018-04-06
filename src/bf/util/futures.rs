@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 //! Future-related utility code lives here.
 
 use futures::*;

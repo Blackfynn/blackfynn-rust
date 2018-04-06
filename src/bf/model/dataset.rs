@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use bf::model;
 
-/// A typed representation of a dataset identifier.
+/// An identifier for a Blackfynn dataset.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DatasetId(String);
 
@@ -11,6 +11,11 @@ impl DatasetId {
     #[allow(dead_code)]
     pub fn new<S: Into<String>>(id: S) -> Self {
         DatasetId(id.into())
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -38,7 +43,7 @@ impl From<String> for DatasetId {
     }
 }
 
-/// A typed representation of a Blackfynn API dataset
+/// A Blackfynn dataset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {

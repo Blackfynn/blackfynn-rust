@@ -17,9 +17,10 @@ extern crate serde_json;
 extern crate tokio_core;
 extern crate url;
 
-// Expose top-level module `bf`:
-pub mod bf;
+mod bf;
 
-// Re-export:
-pub use bf::api::client::Blackfynn;
+// Publicly re-export:
+pub use bf::{api, error, model};
+pub use bf::api::Blackfynn;
 pub use bf::config::{Config, Environment};
+pub use bf::types::{Future, Result, Stream};

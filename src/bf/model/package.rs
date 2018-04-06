@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 use bf::model;
 
-/// A typed representation of a package identifier.
+/// An identifier for a package on the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PackageId(String);
 
@@ -14,6 +14,11 @@ impl PackageId {
     #[allow(dead_code)]
     pub fn new<S: Into<String>>(id: S) -> Self {
         PackageId(id.into())
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -41,7 +46,7 @@ impl From<String> for PackageId {
     }
 }
 
-/// A type encoding a package's processing state.
+/// A package's processing state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PackageState {
@@ -58,7 +63,7 @@ pub enum PackageState {
     Unavailable,
 }
 
-/// A type encoding a package's type.
+/// A package's type.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PackageType {
@@ -104,7 +109,7 @@ impl PackageType {
     }
 }
 
-/// A typed representation of a Blackfynn API package.
+/// A "package" representation on the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Package {

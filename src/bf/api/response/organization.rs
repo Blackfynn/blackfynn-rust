@@ -2,6 +2,7 @@
 
 use bf::model;
 
+/// A response wrapping a `model::Organization`, along with related metadata.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Organization {
@@ -12,7 +13,7 @@ pub struct Organization {
     pub organization: model::Organization
 }
 
-/// A type representing a listing of organizations a user is a member of
+/// A listing of organizations a user is a member of.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Organizations {

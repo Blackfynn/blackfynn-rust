@@ -1,16 +1,15 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// This module contains types that serve as representations
-/// of server responses from the Blackfynn API.
+//! Client response types to the Blackfynn API.
 
-pub mod account;
-pub mod channel;
-pub mod dataset;
-pub mod file;
-pub mod organization;
-pub mod package;
-pub mod security;
-pub mod upload;
+mod account;
+mod channel;
+mod dataset;
+mod file;
+mod organization;
+mod package;
+mod security;
+mod upload;
 
 // Re-export
 pub use self::account::{ApiSession};

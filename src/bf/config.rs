@@ -6,9 +6,9 @@ use std::env;
 
 use url::Url;
 
-use bf::model::aws;
+use bf::model::S3ServerSideEncryption;
 
-/// Defines the environment the library is operating with.
+/// Defines the server environment the library is interacting with.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Environment {
     #[allow(dead_code)]
@@ -37,10 +37,11 @@ impl Environment {
     }
 }
 
+/// Configuration options for the Blackfynn client.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Config {
     env: Environment,
-    s3_server_side_encryption: aws::S3ServerSideEncryption
+    s3_server_side_encryption: S3ServerSideEncryption
 }
 
 impl Config {
@@ -63,7 +64,7 @@ impl Config {
     }
 
     #[allow(dead_code)]
-    pub fn s3_server_side_encryption(&self) -> &aws::S3ServerSideEncryption {
+    pub fn s3_server_side_encryption(&self) -> &S3ServerSideEncryption {
         &self.s3_server_side_encryption
     }
 }

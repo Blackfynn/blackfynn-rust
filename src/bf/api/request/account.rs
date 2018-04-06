@@ -1,6 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// A type representing a login request
+/// A Blackfynn platform login request.
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiLogin {

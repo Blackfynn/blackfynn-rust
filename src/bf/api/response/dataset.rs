@@ -3,7 +3,7 @@
 use bf::model;
 use bf::api::response::package::Package;
 
-/// A type representing an API response containing a dataset
+/// A response wrapping a `model::Dataset`, along with and related metadata.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {

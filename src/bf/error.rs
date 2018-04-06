@@ -1,6 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-//! Blackfynn-specific API errors and such.
+//! Errors specific to the Blackfynn platform.
 
 use std::{error, fmt, path, io};
 

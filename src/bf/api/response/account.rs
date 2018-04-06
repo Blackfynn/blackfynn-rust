@@ -2,7 +2,7 @@
 
 use bf::model;
 
-/// A type representing the result of a successful login
+/// The result of a successful login.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 pub struct ApiSession {
     pub session_token: model::SessionToken,

@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use std::cell::Cell;
 
 use futures::*;
@@ -9,6 +11,15 @@ use serde;
 use bf;
 use bf::api::client::{Blackfynn, Request};
 
+/// An abstraction of an HTTP `POST` request.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// Post::new(self, "/files/upload/preview")
+///   .param("append", if append { "true" } else { "false" })
+///   .body(request::PreviewPackage::new(&s3_files)))
+/// ```
 pub struct Post<P, T> {
     bf: Blackfynn,
     route: String,

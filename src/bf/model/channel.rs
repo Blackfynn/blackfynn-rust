@@ -1,7 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// Representation of a Blackfynn API channel
-
+/// A Blackfynn timeseries channel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {

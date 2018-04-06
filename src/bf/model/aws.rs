@@ -2,9 +2,20 @@
 
 use bf::model;
 
-/// A type representing an AWS S3 access key.
+/// An AWS S3 access key.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessKey(String);
+
+impl AccessKey {
+    pub fn new(key: String) -> Self {
+        AccessKey(key)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
 
 impl AsRef<String> for AccessKey {
     fn as_ref(&self) -> &String {
@@ -15,12 +26,6 @@ impl AsRef<String> for AccessKey {
 impl AsRef<str> for AccessKey {
     fn as_ref(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl AccessKey {
-    pub fn new(key: String) -> Self {
-        AccessKey(key)
     }
 }
 
@@ -36,9 +41,20 @@ impl From<String> for AccessKey {
     }
 }
 
-/// A type representing an AWS S3 secret key.
+/// An AWS S3 secret key.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretKey(String);
+
+impl SecretKey {
+    pub fn new(key: String) -> Self {
+        SecretKey(key)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
 
 impl AsRef<String> for SecretKey {
     fn as_ref(&self) -> &String {
@@ -49,12 +65,6 @@ impl AsRef<String> for SecretKey {
 impl AsRef<str> for SecretKey {
     fn as_ref(&self) -> &str {
         self.0.as_str()
-    }
-}
-
-impl SecretKey {
-    pub fn new(key: String) -> Self {
-        SecretKey(key)
     }
 }
 
@@ -70,13 +80,18 @@ impl From<String> for SecretKey {
     }
 }
 
-/// A type representing an AWS S3 bucket.
+/// An AWS S3 bucket.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3Bucket(String);
 
 impl S3Bucket {
     pub fn new(s3_bucket: String) -> Self {
         S3Bucket(s3_bucket)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -104,13 +119,18 @@ impl From<String> for S3Bucket {
     }
 }
 
-/// A type representing an AWS S3 key.
+/// An AWS S3 object key.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3Key(String);
 
 impl S3Key {
     pub fn new(s3_key: String) -> Self {
         S3Key(s3_key)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 
     /// Converts a static `S3Key` into an appendable `S3UploadKey`. When
@@ -145,8 +165,7 @@ impl From<String> for S3Key {
     }
 }
 
-/// A type representing an appendable, AWS S3 key used for uploading to the
-/// Blackfynn platform.
+/// An appendable, AWS S3 object key used for uploading to the Blackfynn platform.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct S3UploadKey {
     email: String,
@@ -164,7 +183,7 @@ impl S3UploadKey {
     }
 
     fn format_as_key(&self) -> String {
-        format!("{email}/data/{import_id}/{file_name}",
+        format!("{email}/{import_id}/{file_name}",
                 email=self.email,
                 import_id=AsRef::<String>::as_ref(&self.import_id),
                 file_name=self.file_name)
@@ -183,7 +202,7 @@ impl From<S3UploadKey> for S3Key {
     }
 }
 
-/// A type representing an AWS server side encryption type.
+/// An AWS server-side encryption type.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum S3ServerSideEncryption {
     KMS,
@@ -211,7 +230,7 @@ impl Default for S3ServerSideEncryption {
     }
 }
 
-/// A type representing an AWS encryption key.
+/// An AWS encryption key.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3EncryptionKeyId(String);
 
@@ -219,6 +238,11 @@ impl S3EncryptionKeyId {
     #[allow(dead_code)]
     pub fn new(encryption_key_id: String) -> Self {
         S3EncryptionKeyId(encryption_key_id)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -246,7 +270,7 @@ impl From<String> for S3EncryptionKeyId {
     }
 }
 
-/// A type representing an AWS multipart upload identifier.
+/// An AWS multipart upload identifier.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S3UploadId(String);
 
@@ -254,6 +278,11 @@ impl S3UploadId {
     #[allow(dead_code)]
     pub fn new(upload_id: String) -> Self {
         S3UploadId(upload_id)
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 

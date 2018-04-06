@@ -4,8 +4,7 @@ use chrono::{DateTime, Utc};
 
 use bf::model;
 
-/// A type representing temporary credentials to perform an action, like
-/// uploading a file or stream data.
+/// Temporary credentials to perform an action, like uploading a file or stream data.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemporaryCredential {
@@ -41,9 +40,14 @@ impl TemporaryCredential {
     pub fn expiration(&self) -> &DateTime<Utc> {
         &self.expiration
     }
+
+    /// Assumes ownership of this credential, returning its secrets.
+    pub fn take(self) -> (model::AccessKey, model::SecretKey, model::SessionToken) {
+        (self.access_key, self.secret_key, self.session_token)
+    }
 }
 
-/// A type representing credentials to upload a file.
+/// Credentials to upload a file.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadCredential {
@@ -57,6 +61,11 @@ impl UploadCredential {
     #[allow(dead_code)]
     pub fn temp_credentials(&self) -> &TemporaryCredential {
         &self.temp_credentials
+    }
+
+    #[allow(dead_code)]
+    pub fn take_temp_credentials(self) -> TemporaryCredential {
+        self.temp_credentials
     }
 
     #[allow(dead_code)]

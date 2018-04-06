@@ -1,17 +1,17 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model;
+use bf::model::S3File;
 
-/// A type representing a preview of files to be uploaded.
+/// A preview of files to be uploaded to the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewPackage {
-    pub files: Vec<model::upload::S3File>
+    pub files: Vec<S3File>
 }
 
 impl PreviewPackage {
     #[allow(dead_code)]
-    pub fn new(files: &[model::upload::S3File]) -> Self {
+    pub fn new(files: &[S3File]) -> Self {
         Self {
             files: files.to_owned()
         }

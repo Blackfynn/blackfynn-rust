@@ -2,7 +2,7 @@
 
 use bf::model;
 
-/// A typed representation of an organization identifier.
+/// An identifier for an organization on the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OrganizationId(String);
 
@@ -10,6 +10,11 @@ impl OrganizationId {
     #[allow(dead_code)]
     pub fn new<S: Into<String>>(id: S) -> Self {
         OrganizationId(id.into())
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -38,7 +43,7 @@ impl From<String> for OrganizationId {
     }
 }
 
-/// An organization, as defined by the Blackfynn API
+/// An organization.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Organization {

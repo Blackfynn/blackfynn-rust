@@ -2,11 +2,52 @@
 
 use bf::model;
 
-/// A user, as defined by the Blackfynn API
+/// An identifier for a user on the Blackfynn platform.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UserId(String);
+
+impl UserId {
+    #[allow(dead_code)]
+    pub fn new<S: Into<String>>(id: S) -> Self {
+        UserId(id.into())
+    }
+
+    /// Unwraps the value.
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl AsRef<String> for UserId {
+    fn as_ref(&self) -> &String {
+        &self.0
+    }
+}
+
+impl AsRef<str> for UserId {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<UserId> for String {
+    #[allow(dead_code)]
+    fn from(id: UserId) -> Self {
+        id.0
+    }
+}
+
+impl From<String> for UserId {
+    fn from(id: String) -> Self {
+        UserId::new(id)
+    }
+}
+
+/// A user.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
-    id: String,
+    id: UserId,
     first_name: String,
     last_name: String,
     email: String,
@@ -14,7 +55,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn id(&self) -> &String {
+    pub fn id(&self) -> &UserId {
         &self.id
     }
 

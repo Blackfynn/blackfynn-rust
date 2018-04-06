@@ -1,6 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// A type representing a user put request
+/// A user HTTP `PUT` request.
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {

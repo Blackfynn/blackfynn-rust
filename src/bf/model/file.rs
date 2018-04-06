@@ -1,7 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-/// Representation of a Blackfynn API file
-
+/// The representation type of a `model::File`.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileObjectType {
@@ -10,6 +9,7 @@ pub enum FileObjectType {
     Source
 }
 
+/// A file on the Blackfynn platform.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {

@@ -13,7 +13,7 @@ pub struct ObjectMap {
     pub view: Option<Vec<response::file::File>>
 }
 
-/// A type representing an API response containing a package.
+/// A response wrapping a `model::Package`, along with additional metadata.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Package {

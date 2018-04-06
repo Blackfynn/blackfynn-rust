@@ -1,3 +1,5 @@
+// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+
 use std::cell::Cell;
 
 use futures::*;
@@ -9,6 +11,18 @@ use serde;
 use bf;
 use bf::api::client::{Blackfynn, Request};
 
+/// An abstraction of an HTTP `PUT` request.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// Put::new(self, "/user/")
+///                 .body(user)
+///                 .and_then(move |user_response: model::User| {
+///                     this.set_current_organization(user_response.preferred_organization());
+///                     Ok(user_response)
+///                 })
+/// ```
 pub struct Put<P, T> {
     bf: Blackfynn,
     route: String,

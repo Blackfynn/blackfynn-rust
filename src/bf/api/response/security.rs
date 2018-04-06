@@ -2,11 +2,16 @@
 
 use bf::model;
 
-/// A type representing temporary credentials to perform an action, like
-/// uploading a file or stream data.
+/// Temporary credentials to perform an action, like uploading a file or stream data.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemporaryCredential(model::TemporaryCredential);
+
+impl TemporaryCredential {
+    pub fn into_inner(self) -> model::TemporaryCredential {
+        self.0
+    }
+}
 
 impl From<TemporaryCredential> for model::TemporaryCredential {
     fn from(credential: TemporaryCredential) -> Self {
@@ -20,10 +25,16 @@ impl AsRef<model::TemporaryCredential> for TemporaryCredential {
     }
 }
 
-/// A type representing credentials to upload a file.
+/// Credentials to upload a file.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadCredential(model::UploadCredential);
+
+impl UploadCredential {
+    pub fn into_inner(self) -> model::UploadCredential {
+        self.0
+    }
+}
 
 impl From<UploadCredential> for model::UploadCredential {
     fn from(credential: UploadCredential) -> Self {
