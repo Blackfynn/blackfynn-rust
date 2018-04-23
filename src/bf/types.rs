@@ -13,8 +13,8 @@ pub type Result<T> = result::Result<T, error::Error>;
 
 /// A `futures::future::Future` type parameterized by `bf::error::Error`
 #[allow(dead_code)]
-pub type Future<T> = Box<futures::Future<Item=T, Error=error::Error>>;
+pub type Future<T> = Box<futures::Future<Item = T, Error = error::Error>>;
 
 /// A `futures::stream::Stream` type parameterized by `bf::error::Error`
 #[allow(dead_code)]
-pub type Stream<T> = Box<futures::stream::Stream<Item=T, Error=error::Error>>;
+pub type Stream<T> = Box<futures::stream::Stream<Item = T, Error = error::Error>>;
