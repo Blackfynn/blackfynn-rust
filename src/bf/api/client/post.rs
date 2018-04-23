@@ -18,7 +18,7 @@ use bf::api::client::{Blackfynn, Request};
 /// ```rust,ignore
 /// Post::new(self, "/files/upload/preview")
 ///   .param("append", if append { "true" } else { "false" })
-///   .body(request::PreviewPackage::new(&s3_files)))
+///   .body(request::UploadPreview::new(&s3_files)))
 /// ```
 pub struct Post<P, T> {
     bf: Blackfynn,

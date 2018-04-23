@@ -248,14 +248,12 @@ impl MultipartUploadFile {
                                 // If there's a send error, ignore it:
                                 bytes_sent.replace(bytes_sent.get() + (n as u64));
 
-                                let update = ProgressUpdate::new(
-                                    part_number as usize,
+                                let update = ProgressUpdate::new(part_number as usize,
                                     true,
                                     import_id,
                                     file_path,
                                     bytes_sent.get(),
-                                    file_size
-                                );
+                                    file_size);
 
                                 // Call the provided progress callback with the update:
                                 cb.on_update(&update);

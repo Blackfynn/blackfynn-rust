@@ -281,7 +281,7 @@ impl Blackfynn {
                 .body(request::ApiLogin::new(api_key.into(), api_secret.into()))
                 .and_then(move |login_response: response::ApiSession| {
                     this.inner.borrow_mut().session_token =
-                        Some(login_response.session_token.clone());
+                        Some(login_response.session_token().clone());
                     Ok(login_response)
                 }),
         )
@@ -370,7 +370,7 @@ impl Blackfynn {
         path: P,
         files: &[Q],
         append: bool,
-    ) -> bf::Future<response::PreviewPackage>
+    ) -> bf::Future<response::UploadPreview>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
@@ -391,7 +391,7 @@ impl Blackfynn {
         into_future_trait(
             Post::new(self, "/files/upload/preview")
                 .param("append", if append { "true" } else { "false" })
-                .body(request::PreviewPackage::new(&s3_files)),
+                .body(request::UploadPreview::new(&s3_files)),
         )
     }
 
@@ -668,7 +668,7 @@ mod tests {
     }
 
     struct UploadScaffold {
-        preview_package: response::PreviewPackage,
+        preview: response::UploadPreview,
         upload_credential: response::UploadCredential,
     }
 
@@ -692,7 +692,7 @@ mod tests {
                     })
                     .and_then(|(p, c, bf)| {
                         future::ok(UploadScaffold {
-                            preview_package: p,
+                            preview: p,
                             upload_credential: c,
                         }).join(future::ok(bf))
                     }),
@@ -717,18 +717,16 @@ mod tests {
                         .into_inner()
                         .take_temp_credentials(),
                 );
-                stream::futures_unordered(scaffold.preview_package.packages.into_iter().map(
-                    move |package| {
-                        let upload_credential = upload_credential.clone();
-                        // Simple, non-multipart uploading:
-                        uploader.put_objects(
-                            &*TEST_DATA_DIR,
-                            package.files(),
-                            package.import_id().clone(),
-                            upload_credential.into(),
-                        )
-                    },
-                )).map(move |import_id| {
+                stream::futures_unordered(scaffold.preview.into_iter().map(move |package| {
+                    let upload_credential = upload_credential.clone();
+                    // Simple, non-multipart uploading:
+                    uploader.put_objects(
+                        &*TEST_DATA_DIR,
+                        package.files(),
+                        package.import_id().clone(),
+                        upload_credential.into(),
+                    )
+                })).map(move |import_id| {
                     bf.complete_upload(import_id, dataset_id.clone(), None, false)
                 })
                     .collect()
@@ -772,20 +770,16 @@ mod tests {
                         .into_inner()
                         .take_temp_credentials(),
                 );
-                stream::iter_ok::<_, bf::error::Error>(
-                    scaffold
-                        .preview_package
-                        .packages
-                        .into_iter()
-                        .map(move |package| {
-                            uploader.multipart_upload_files(
-                                &*TEST_DATA_DIR,
-                                package.files(),
-                                package.import_id().clone(),
-                                cred.clone().into(),
-                            )
-                        }),
-                ).flatten()
+                stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
+                    move |package| {
+                        uploader.multipart_upload_files(
+                            &*TEST_DATA_DIR,
+                            package.files(),
+                            package.import_id().clone(),
+                            cred.clone().into(),
+                        )
+                    },
+                )).flatten()
                     .filter_map(move |result| match result {
                         MultipartUploadResult::Complete(import_id, _) => {
                             Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
@@ -884,22 +878,18 @@ mod tests {
                     });
                 }
 
-                stream::iter_ok::<_, bf::error::Error>(
-                    scaffold
-                        .preview_package
-                        .packages
-                        .into_iter()
-                        .map(move |package| {
-                            let cb = Rc::clone(&cb);
-                            uploader.multipart_upload_files_cb(
-                                &*BIG_TEST_DATA_DIR,
-                                package.files(),
-                                package.import_id().clone(),
-                                cred.clone().into(),
-                                cb,
-                            )
-                        }),
-                ).flatten()
+                stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
+                    move |package| {
+                        let cb = Rc::clone(&cb);
+                        uploader.multipart_upload_files_cb(
+                            &*BIG_TEST_DATA_DIR,
+                            package.files(),
+                            package.import_id().clone(),
+                            cred.clone().into(),
+                            cb,
+                        )
+                    },
+                )).flatten()
                     .map(move |result| {
                         match result {
                             MultipartUploadResult::Complete(import_id, _) => {
@@ -940,7 +930,10 @@ mod tests {
         for entry in manifests {
             match entry {
                 UploadStatus::Completed(_) => assert!(true),
-                UploadStatus::Aborted(_) => assert!(false),
+                UploadStatus::Aborted(e) => {
+                    println!("ABORTED => {:#?}", e);
+                    assert!(false)
+                }
             }
         }
     }
