@@ -213,18 +213,18 @@ impl S3File {
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
         let file_path = file_path.as_ref();
-        let path = file_path
-            .parent()
-            .ok_or(bf::error::Error::IoError(io::Error::new(
+        let path = file_path.parent().ok_or_else(|| {
+            bf::error::Error::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not destructure path: {:?}", file_path),
-            )))?;
-        let file = file_path
-            .file_name()
-            .ok_or(bf::error::Error::IoError(io::Error::new(
+            ))
+        })?;
+        let file = file_path.file_name().ok_or_else(|| {
+            bf::error::Error::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not destructure path: {:?}", file_path),
-            )))?;
+            ))
+        })?;
         S3File::new(path, file, upload_id)
     }
 
@@ -324,9 +324,9 @@ impl ManifestEntry {
     /// Returns a collection of uploaded files, relative to the Blackfynn S3 bucket.
     pub fn files(&self) -> &Vec<String> {
         use self::ManifestEntry::*;
-        match self {
-            &Legacy(ref manifest) => &manifest.files,
-            &ETL(ref manifest) => &manifest.content.uploaded_files,
+        match *self {
+            Legacy(ref manifest) => &manifest.files,
+            ETL(ref manifest) => &manifest.content.uploaded_files,
         }
     }
 }
@@ -336,6 +336,9 @@ impl ManifestEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PackagePreview {
     package_name: String,
+    #[serde(deserialize_with = "model::PackageType::deserialize")]
+    package_type: Option<model::PackageType>,
+    file_type: Option<String>,
     import_id: ImportId,
     files: Vec<S3File>,
     group_size: i64,
@@ -348,6 +351,11 @@ impl PackagePreview {
     }
 
     #[allow(dead_code)]
+    pub fn package_type(&self) -> Option<&model::PackageType> {
+        self.package_type.as_ref()
+    }
+
+    #[allow(dead_code)]
     pub fn import_id(&self) -> &ImportId {
         &self.import_id
     }
@@ -355,6 +363,16 @@ impl PackagePreview {
     #[allow(dead_code)]
     pub fn files(&self) -> &Vec<S3File> {
         &self.files
+    }
+
+    #[allow(dead_code)]
+    pub fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn file_type(&self) -> Option<&String> {
+        self.file_type.as_ref()
     }
 
     #[allow(dead_code)]

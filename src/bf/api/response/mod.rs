@@ -19,4 +19,4 @@ pub use self::file::File;
 pub use self::organization::{Organization, Organizations};
 pub use self::package::Package;
 pub use self::security::{TemporaryCredential, UploadCredential};
-pub use self::upload::{Manifest, PreviewPackage};
+pub use self::upload::{Manifest, UploadPreview};
