@@ -126,20 +126,20 @@ impl Blackfynn {
 
         // If query parameters are provided, add them to the constructed URL:
         for (k, v) in params {
-            use_url
-                .query_pairs_mut()
+            use_url.query_pairs_mut()
                 .append_pair(k.as_str(), v.as_str());
         }
 
         // Lift the URL into a future:
-        let url = future::result(use_url.to_string().parse::<hyper::Uri>()).map_err(|e| e.into());
+        let url = future::result(use_url.to_string().parse::<hyper::Uri>())
+            .map_err(|e| bf::Error::with_chain(e, "request: url"));
 
         // If a body payload was provided, lift it into a future:
         let body: bf::Future<Option<String>> = if let Some(data) = payload {
             into_future_trait(
                 future::result(serde_json::to_string(data))
                     .map(Some)
-                    .map_err(|e| e.into()),
+                    .map_err(|e| bf::Error::with_chain(e, "request: body"))
             )
         } else {
             into_future_trait(future::ok(None))
@@ -183,7 +183,7 @@ impl Blackfynn {
                         .borrow()
                         .http_client
                         .request(req)
-                        .map_err(|e| e.into())
+                        .map_err(|e| bf::Error::with_chain(e, "request: execute"))
                 },
             )
             .and_then(|response: hyper::Response| {
@@ -194,22 +194,26 @@ impl Blackfynn {
                 response
                     .body()
                     .concat2()
-                    .map_err(|e| e.into())
+                    .map_err(|e| bf::Error::with_chain(e, "request: read response"))
                     .and_then(move |body: hyper::Chunk| future::ok((status_code, body)))
                     .and_then(
                         move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
                             if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(bf::error::Error::ApiError(
+                                return future::err(bf::error::ErrorKind::ApiError(
                                     status_code,
                                     String::from_utf8_lossy(&body).to_string(),
-                                ));
+                                ).into());
                             }
                             future::ok(body)
                         },
                     )
                     .and_then(|body: hyper::Chunk| {
                         // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice::<Q>(&body).map_err(Into::into)
+                        serde_json::from_slice::<Q>(&body)
+                            .map_err(move |e| {
+                                let as_bytes: Vec<u8> = body.to_vec();
+                                bf::Error::with_chain(e, String::from_utf8_lossy(&as_bytes).to_string())
+                            })
                     })
             });
 
@@ -627,7 +631,7 @@ mod tests {
         if let Err(e) = package {
             match e {
                 // blackfynn api returns 403 in this case..it should really be 404 I think
-                bf::error::Error::ApiError(status, _) => assert_eq!(status.as_u16(), 403),
+                bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => assert_eq!(status.as_u16(), 403),
                 _ => assert!(false),
             }
         }

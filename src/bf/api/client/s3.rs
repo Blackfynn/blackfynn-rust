@@ -242,7 +242,7 @@ impl MultipartUploadFile {
                     let f = future::lazy(move || {
                         s3_client.upload_part(&request)
                             .map(move |output| (output, part_number, cb ))
-                            .map_err(Into::into)
+                            .map_err(|e| bf::Error::with_chain(e, "upload parts"))
                             .and_then(move |(part_output, part_number, cb )| {
                                 // Update the sent byte count and signal the fact.
                                 // If there's a send error, ignore it:
@@ -277,7 +277,7 @@ impl MultipartUploadFile {
 
             into_stream_trait(f)
         } else {
-            into_stream_trait(stream::once(Err(bf::error::Error::S3MissingUploadId)))
+            into_stream_trait(stream::once(Err(bf::error::ErrorKind::S3MissingUploadId.into())))
         }
     }
 
@@ -293,11 +293,11 @@ impl MultipartUploadFile {
 
             let f = self.s3_client
                 .abort_multipart_upload(&request)
-                .map_err(Into::into);
+                .map_err(|e| bf::Error::with_chain(e, "multipart upload abort"));
 
             into_future_trait(f)
         } else {
-            into_future_trait(future::result(Err(bf::error::Error::S3MissingUploadId)))
+            into_future_trait(future::result(Err(bf::error::ErrorKind::S3MissingUploadId.into())))
         }
     }
 
@@ -321,11 +321,11 @@ impl MultipartUploadFile {
 
             let f = self.s3_client
                 .complete_multipart_upload(&request)
-                .map_err(Into::into);
+                .map_err(|e| bf::Error::with_chain(e, "multipart upload complete"));
 
             into_future_trait(f)
         } else {
-            into_future_trait(future::result(Err(bf::error::Error::S3MissingUploadId)))
+            into_future_trait(future::result(Err(bf::error::ErrorKind::S3MissingUploadId.into())))
         }
     }
 }
@@ -614,7 +614,8 @@ impl S3Uploader {
                     server_side_encryption: Some(s3_server_side_encryption),
                     ..Default::default()
                 };
-                s3_client.put_object(&request).map_err(Into::into)
+                s3_client.put_object(&request)
+                    .map_err(|e| bf::Error::with_chain(e, "S3 put object"))
             })
             .and_then(move |_| {
                 let update = ProgressUpdate::new(
@@ -658,7 +659,7 @@ impl S3Uploader {
 
         let f = stream::futures_unordered(fs)
             .into_future()
-            .map_err(|(e, _)| e)
+            .map_err(|(e, _)| bf::Error::with_chain(e, "S3 put objects"))
             .and_then(|_| Ok(ret_import_id));
 
         into_future_trait(f)
@@ -726,7 +727,7 @@ impl S3Uploader {
                     cb,
                 ))
             })
-            .map_err(Into::into);
+            .map_err(|e| bf::Error::with_chain(e, "begin multipart upload"));
 
         into_future_trait(f)
     }

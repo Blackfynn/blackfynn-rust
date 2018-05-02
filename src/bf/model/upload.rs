@@ -146,7 +146,7 @@ fn file_chunks<P: AsRef<Path>>(
     from_path: P,
     file_size: u64,
     chunk_size: u64,
-) -> Result<Vec<S3FileChunk>, bf::error::Error> {
+) -> bf::Result<Vec<S3FileChunk>> {
     let nchunks = cmp::max(1, (file_size as f64 / chunk_size as f64).ceil() as u64);
     (0..nchunks)
         .map(move |part_number| {
@@ -168,24 +168,26 @@ impl S3File {
     ) -> bf::Result<(String, fs::Metadata)> {
         let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
-            return Err(bf::error::Error::IoError(io::Error::new(
+            return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Not a file: {:?}", file_path),
-            )));
+            )).into());
         };
         if !file_path.exists() {
-            return Err(bf::error::Error::IoError(io::Error::new(
+            return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not read: {:?}", file_path),
-            )));
+            )).into());
         };
 
         // Get the full file path as a String:
-        let file_name = file_path
+        let file_name: bf::Result<String> = file_path
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| bf::error::Error::InvalidUnicodePath(file_path.clone()))
-            .map(String::from)?;
+            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePath(file_path.clone()).into())
+            .map(String::from);
+
+        let file_name = file_name?;
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
@@ -214,16 +216,16 @@ impl S3File {
     ) -> bf::Result<Self> {
         let file_path = file_path.as_ref();
         let path = file_path.parent().ok_or_else(|| {
-            bf::error::Error::IoError(io::Error::new(
+            bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not destructure path: {:?}", file_path),
-            ))
+            ).into())
         })?;
         let file = file_path.file_name().ok_or_else(|| {
-            bf::error::Error::IoError(io::Error::new(
+            bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not destructure path: {:?}", file_path),
-            ))
+            ).into())
         })?;
         S3File::new(path, file, upload_id)
     }
