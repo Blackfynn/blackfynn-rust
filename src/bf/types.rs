@@ -4,12 +4,9 @@
 
 use futures;
 
-use std::result;
-
 use bf::error;
 
-/// A `std::result::Result` type parameterized by `bf::error::Error`
-pub type Result<T> = result::Result<T, error::Error>;
+pub use bf::error::{Error, ErrorKind, Result, ResultExt};
 
 /// A `futures::future::Future` type parameterized by `bf::error::Error`
 #[allow(dead_code)]
