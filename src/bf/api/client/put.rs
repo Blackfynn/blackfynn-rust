@@ -29,12 +29,13 @@ pub struct Put<P, T> {
     params: Vec<(String, String)>,
     body: Option<P>,
     initialized: bool,
-    request_fut: Cell<Option<bf::Future<T>>>
+    request_fut: Cell<Option<bf::Future<T>>>,
 }
 
-impl <B, T> Put<B, T>
-where B: serde::Serialize,
-      T: 'static + serde::de::DeserializeOwned
+impl<B, T> Put<B, T>
+where
+    B: serde::Serialize,
+    T: 'static + serde::de::DeserializeOwned,
 {
     #[allow(dead_code)]
     pub fn new<R: Into<String>>(bf: &Blackfynn, route: R) -> Self {
@@ -44,7 +45,7 @@ where B: serde::Serialize,
             params: vec![],
             body: None as Option<B>,
             initialized: false,
-            request_fut: Cell::new(None)
+            request_fut: Cell::new(None),
         }
     }
 
@@ -61,16 +62,23 @@ where B: serde::Serialize,
     }
 }
 
-impl <P: serde::Serialize, T> Request<T> for Put<P, T>
-where T: 'static + serde::de::DeserializeOwned
+impl<P: serde::Serialize, T> Request<T> for Put<P, T>
+where
+    T: 'static + serde::de::DeserializeOwned,
 {
     fn new_request(&self) -> bf::Future<T> {
-        self.bf.request(self.route.clone(), Method::Put, self.params.clone(), self.body.as_ref())
+        self.bf.request(
+            self.route.clone(),
+            Method::Put,
+            self.params.clone(),
+            self.body.as_ref(),
+        )
     }
 }
 
-impl <P: serde::Serialize, T> Future for Put<P, T>
-where T: 'static + serde::de::DeserializeOwned
+impl<P: serde::Serialize, T> Future for Put<P, T>
+where
+    T: 'static + serde::de::DeserializeOwned,
 {
     type Item = T;
     type Error = bf::error::Error;

@@ -6,7 +6,7 @@
 pub enum FileObjectType {
     File,
     View,
-    Source
+    Source,
 }
 
 /// A file on the Blackfynn platform.
@@ -18,7 +18,7 @@ pub struct File {
     s3bucket: String,
     s3key: String,
     object_type: FileObjectType,
-    size: u64
+    size: u64,
 }
 
 impl File {

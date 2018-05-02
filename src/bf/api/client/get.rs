@@ -27,11 +27,12 @@ pub struct Get<T> {
     route: String,
     params: Vec<(String, String)>,
     initialized: bool,
-    request_fut: Cell<Option<bf::Future<T>>>
+    request_fut: Cell<Option<bf::Future<T>>>,
 }
 
-impl <T> Get<T>
-where T: 'static + serde::de::DeserializeOwned
+impl<T> Get<T>
+where
+    T: 'static + serde::de::DeserializeOwned,
 {
     #[allow(dead_code)]
     pub fn new<R: Into<String>>(bf: &Blackfynn, route: R) -> Self {
@@ -40,7 +41,7 @@ where T: 'static + serde::de::DeserializeOwned
             route: route.into(),
             params: vec![],
             initialized: false,
-            request_fut: Cell::new(None)
+            request_fut: Cell::new(None),
         }
     }
 
@@ -51,16 +52,23 @@ where T: 'static + serde::de::DeserializeOwned
     }
 }
 
-impl <T> Request<T> for Get<T>
-where T: 'static + serde::de::DeserializeOwned
+impl<T> Request<T> for Get<T>
+where
+    T: 'static + serde::de::DeserializeOwned,
 {
     fn new_request(&self) -> bf::Future<T> {
-        self.bf.request(self.route.clone(), Method::Get, self.params.clone(), None as Option<&Nothing>)
+        self.bf.request(
+            self.route.clone(),
+            Method::Get,
+            self.params.clone(),
+            None as Option<&Nothing>,
+        )
     }
 }
 
-impl <T> Future for Get<T>
-where T: 'static + serde::de::DeserializeOwned
+impl<T> Future for Get<T>
+where
+    T: 'static + serde::de::DeserializeOwned,
 {
     type Item = T;
     type Error = bf::error::Error;

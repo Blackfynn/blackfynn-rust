@@ -8,5 +8,5 @@ mod user;
 
 // Re-export:
 pub use self::account::ApiLogin;
-pub use self::upload::PreviewPackage;
+pub use self::upload::UploadPreview;
 pub use self::user::User;

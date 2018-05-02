@@ -12,7 +12,7 @@ pub struct TemporaryCredential {
     secret_key: model::SecretKey,
     region: String,
     session_token: model::SessionToken,
-    expiration: DateTime<Utc>
+    expiration: DateTime<Utc>,
 }
 
 impl TemporaryCredential {
@@ -54,7 +54,7 @@ pub struct UploadCredential {
     temp_credentials: TemporaryCredential,
     encryption_key_id: model::S3EncryptionKeyId,
     s3_bucket: model::S3Bucket,
-    s3_key: model::S3Key
+    s3_key: model::S3Key,
 }
 
 impl UploadCredential {
