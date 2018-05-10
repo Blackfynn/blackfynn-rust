@@ -1,6 +1,17 @@
 # blackfynn-rust
 The official Blackfynn Rust library.
 
+<table>
+    <tr>
+        <td><strong>Linux / OS X</strong></td>
+        <td><a href="" title="Travis Build Status"><img src="" alt="travis-badge"></img></a></td>
+    </tr>
+    <tr>
+        <td><strong>Windows</strong></td>
+        <td><a href="https://ci.appveyor.com/project/scirner22/blackfynn-rust/branch/master" title="Appveyor Build Status"><img src="https://ci.appveyor.com/api/projects/status/yluao3bcox2g6q97/branch/master?svg=true" alt="appveyor-badge"></img></a></td>
+    </tr>
+</table>
+
 ## Usage
 ```
 [dependencies]
