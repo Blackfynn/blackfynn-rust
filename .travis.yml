@@ -1,0 +1,17 @@
+dist: trusty
+language: rust
+cache:
+  directories:
+    - ~/.cargo
+rust:
+  - 1.25.0
+  - stable
+os:
+  - linux
+  - osx
+before_script:
+  - rustup component add rustfmt-preview
+script:
+  - cargo update
+  - cargo fmt --all -- --write-mode=diff
+  - cargo test
