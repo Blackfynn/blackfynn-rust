@@ -16,7 +16,7 @@ pub enum Environment {
     #[allow(dead_code)]
     Development,
     #[allow(dead_code)]
-    Production
+    Production,
 }
 
 impl Environment {
@@ -24,15 +24,14 @@ impl Environment {
         use self::Environment::*;
         match *self {
             Local => {
-                let api_loc = env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
-                api_loc.parse::<Url>().expect(&format!("Not a valid url: {}", api_loc))
-            },
-            Development => "https://dev.blackfynn.io"
-                .parse::<Url>()
-                .unwrap(), // This should never fail
-            Production => "https://api.blackfynn.io"
-                .parse::<Url>()
-                .unwrap() // This should never fail
+                let api_loc =
+                    env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
+                api_loc
+                    .parse::<Url>()
+                    .expect(&format!("Not a valid url: {}", api_loc))
+            }
+            Development => "https://dev.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
+            Production => "https://api.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
         }
     }
 }
@@ -41,7 +40,7 @@ impl Environment {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Config {
     env: Environment,
-    s3_server_side_encryption: S3ServerSideEncryption
+    s3_server_side_encryption: S3ServerSideEncryption,
 }
 
 impl Config {
@@ -49,7 +48,7 @@ impl Config {
     pub fn new(env: Environment) -> Self {
         Self {
             s3_server_side_encryption: Default::default(),
-            env
+            env,
         }
     }
 

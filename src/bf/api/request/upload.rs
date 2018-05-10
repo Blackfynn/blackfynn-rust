@@ -6,14 +6,14 @@ use bf::model::S3File;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewPackage {
-    pub files: Vec<S3File>
+    pub files: Vec<S3File>,
 }
 
 impl PreviewPackage {
     #[allow(dead_code)]
     pub fn new(files: &[S3File]) -> Self {
         Self {
-            files: files.to_owned()
+            files: files.to_owned(),
         }
     }
 }

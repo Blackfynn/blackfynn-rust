@@ -6,7 +6,7 @@ use bf::model::{self, PackagePreview};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewPackage {
-    pub packages: Vec<PackagePreview>
+    pub packages: Vec<PackagePreview>,
 }
 
 /// A manifest of files uploaded to the Blackfynn platform.

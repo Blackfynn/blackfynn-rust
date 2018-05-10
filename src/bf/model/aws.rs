@@ -170,7 +170,7 @@ impl From<String> for S3Key {
 pub struct S3UploadKey {
     email: String,
     import_id: model::ImportId,
-    file_name: String
+    file_name: String,
 }
 
 impl S3UploadKey {
@@ -178,15 +178,17 @@ impl S3UploadKey {
         Self {
             email: email.to_string(),
             import_id: import_id.clone(),
-            file_name: file_name.to_string()
+            file_name: file_name.to_string(),
         }
     }
 
     fn format_as_key(&self) -> String {
-        format!("{email}/{import_id}/{file_name}",
-                email=self.email,
-                import_id=AsRef::<String>::as_ref(&self.import_id),
-                file_name=self.file_name)
+        format!(
+            "{email}/{import_id}/{file_name}",
+            email = self.email,
+            import_id = AsRef::<String>::as_ref(&self.import_id),
+            file_name = self.file_name
+        )
     }
 }
 
@@ -206,7 +208,7 @@ impl From<S3UploadKey> for S3Key {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum S3ServerSideEncryption {
     KMS,
-    AES256
+    AES256,
 }
 
 impl From<S3ServerSideEncryption> for String {
@@ -219,7 +221,7 @@ impl From<S3ServerSideEncryption> for &'static str {
     fn from(encryption_type: S3ServerSideEncryption) -> Self {
         match encryption_type {
             S3ServerSideEncryption::KMS => "aws:kms",
-            S3ServerSideEncryption::AES256 => "AES256"
+            S3ServerSideEncryption::AES256 => "AES256",
         }
     }
 }

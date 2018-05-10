@@ -50,7 +50,7 @@ pub struct Organization {
     id: OrganizationId,
     name: String,
     slug: String,
-    encryption_key_id: model::S3EncryptionKeyId
+    encryption_key_id: model::S3EncryptionKeyId,
 }
 
 impl Organization {

@@ -2,7 +2,7 @@
 
 //! Errors specific to the Blackfynn platform.
 
-use std::{error, fmt, path, io};
+use std::{error, fmt, io, path};
 
 use hyper;
 
@@ -105,7 +105,7 @@ impl error::Error for Error {
             S3PutObjectError(_) => "S3: put object error",
             S3UploadPartError(_) => "S3: upload part error",
             UriError(_) => "URI error",
-            UrlParseError(_) => "URL parse error"
+            UrlParseError(_) => "URL parse error",
         }
     }
 }
@@ -114,19 +114,29 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Error::*;
         match *self {
-            ApiError(status_code, ref message) => write!(f, "API error :: {} {}", status_code, message),
+            ApiError(status_code, ref message) => {
+                write!(f, "API error :: {} {}", status_code, message)
+            }
             HttpError(ref err) => write!(f, "HTTP error :: {}", err),
-            InvalidUnicodePath(ref path) => write!(f, "Invalid unicode characters in path :: {:?}", path),
+            InvalidUnicodePath(ref path) => {
+                write!(f, "Invalid unicode characters in path :: {:?}", path)
+            }
             IoError(ref err) => write!(f, "IO error :: {}", err),
             JsonError(ref err) => write!(f, "JSON error :: {}", err),
-            S3AbortMultipartUploadError(ref err) => write!(f, "S3: abort multipart upload error :: {}", err),
-            S3CreateMultipartUploadError(ref err) => write!(f, "S3: create multipart upload error :: {}", err),
-            S3CompleteMultipartUploadError(ref err) => write!(f, "S3: complete multipart upload error :: {}", err),
+            S3AbortMultipartUploadError(ref err) => {
+                write!(f, "S3: abort multipart upload error :: {}", err)
+            }
+            S3CreateMultipartUploadError(ref err) => {
+                write!(f, "S3: create multipart upload error :: {}", err)
+            }
+            S3CompleteMultipartUploadError(ref err) => {
+                write!(f, "S3: complete multipart upload error :: {}", err)
+            }
             S3MissingUploadId => write!(f, "S3: missing upload ID"),
             S3PutObjectError(ref err) => write!(f, "S3 put object error :: {}", err),
             S3UploadPartError(ref err) => write!(f, "S3 upload part error :: {}", err),
             UriError(ref err) => write!(f, "URI error :: {}", err),
-            UrlParseError(ref err) => write!(f, "URL parse error :: {}", err)
+            UrlParseError(ref err) => write!(f, "URL parse error :: {}", err),
         }
     }
 }

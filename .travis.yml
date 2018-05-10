@@ -4,7 +4,6 @@ cache:
   directories:
     - ~/.cargo
 rust:
-  - 1.25.0
   - stable
 os:
   - linux
