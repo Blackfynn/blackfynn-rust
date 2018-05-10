@@ -6,5 +6,17 @@ use bf::model;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
-    pub content: model::File,
+    content: model::File,
+}
+
+impl File {
+    pub fn into_inner(self) -> model::File {
+        self.content
+    }
+}
+
+impl AsRef<model::File> for File {
+    fn as_ref(&self) -> &model::File {
+        &self.content
+    }
 }
