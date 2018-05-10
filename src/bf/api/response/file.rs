@@ -6,5 +6,5 @@ use bf::model;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
-    pub content: model::File
+    pub content: model::File,
 }

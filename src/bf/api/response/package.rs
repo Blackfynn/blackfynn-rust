@@ -1,7 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model;
 use bf::api::response;
+use bf::model;
 
 // This corresponds to the `objects` map that is returned from `/packages/{:id}`
 // when the `include=` parameter is provided.
@@ -10,7 +10,7 @@ use bf::api::response;
 pub struct ObjectMap {
     pub source: Option<Vec<response::file::File>>,
     pub file: Option<Vec<response::file::File>>,
-    pub view: Option<Vec<response::file::File>>
+    pub view: Option<Vec<response::file::File>>,
 }
 
 /// A response wrapping a `model::Package`, along with additional metadata.

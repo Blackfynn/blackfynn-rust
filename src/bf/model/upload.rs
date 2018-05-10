@@ -1,15 +1,15 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use std::{cmp, fs};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::{cmp, fs};
 
 use futures::*;
 
-use bf::{self, model};
 use bf::util::futures::into_stream_trait;
+use bf::{self, model};
 
-/// An identifier returned by the Blackfynn platform used to group 
+/// An identifier returned by the Blackfynn platform used to group
 /// a collection of files together for uploading.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportId(String);
@@ -87,17 +87,22 @@ pub struct S3FileChunk {
     handle: fs::File,
     file_size: u64,
     chunk_size: u64,
-    index: u64
+    index: u64,
 }
 
 impl S3FileChunk {
-    pub fn new<P: AsRef<Path>>(path: P, file_size: u64, chunk_size: u64, index: u64) -> bf::Result<S3FileChunk> {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        file_size: u64,
+        chunk_size: u64,
+        index: u64,
+    ) -> bf::Result<S3FileChunk> {
         let handle = fs::File::open(path)?;
         Ok(S3FileChunk {
             handle,
             file_size,
             chunk_size,
-            index
+            index,
         })
     }
 
@@ -105,7 +110,11 @@ impl S3FileChunk {
         let offset = self.chunk_size * self.index;
         assert!(offset <= self.file_size);
         let read_amount = self.file_size - offset;
-        let n = if read_amount > self.chunk_size { self.chunk_size } else { read_amount } as usize;
+        let n = if read_amount > self.chunk_size {
+            self.chunk_size
+        } else {
+            read_amount
+        } as usize;
         //let mut buf = vec![0u8; n];
         let mut buf = Vec::with_capacity(n);
         unsafe {
@@ -130,13 +139,19 @@ impl S3FileChunk {
 pub struct S3File {
     file_name: String,
     upload_id: Option<UploadId>,
-    size: u64
+    size: u64,
 }
 
-fn file_chunks<P: AsRef<Path>>(from_path: P, file_size: u64, chunk_size: u64) -> Result<Vec<S3FileChunk>, bf::error::Error> {
+fn file_chunks<P: AsRef<Path>>(
+    from_path: P,
+    file_size: u64,
+    chunk_size: u64,
+) -> Result<Vec<S3FileChunk>, bf::error::Error> {
     let nchunks = cmp::max(1, (file_size as f64 / chunk_size as f64).ceil() as u64);
-    (0 .. nchunks)
-        .map(move |part_number| S3FileChunk::new(from_path.as_ref(), file_size, chunk_size, part_number))
+    (0..nchunks)
+        .map(move |part_number| {
+            S3FileChunk::new(from_path.as_ref(), file_size, chunk_size, part_number)
+        })
         .collect()
 }
 
@@ -147,19 +162,28 @@ impl S3File {
     /// 2) does not contain invalid unicode symbols
     ///
     /// If neither condition hold, this function will return an error
-    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q) -> bf::Result<(String, fs::Metadata)> {
+    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(
+        path: P,
+        file: Q,
+    ) -> bf::Result<(String, fs::Metadata)> {
         let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
-            return Err(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other,
-                                                                format!("Not a file: {:?}", file_path))));
+            return Err(bf::error::Error::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Not a file: {:?}", file_path),
+            )));
         };
         if !file_path.exists() {
-            return Err(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other,
-                                                                format!("Could not read: {:?}", file_path))));
+            return Err(bf::error::Error::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not read: {:?}", file_path),
+            )));
         };
 
         // Get the full file path as a String:
-        let file_name = file_path.file_name().and_then(|name| name.to_str())
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
             .ok_or_else(|| bf::error::Error::InvalidUnicodePath(file_path.clone()))
             .map(String::from)?;
 
@@ -170,22 +194,37 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn new<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q, upload_id: Option<UploadId>) -> bf::Result<Self> {
+    pub fn new<P: AsRef<Path>, Q: AsRef<Path>>(
+        path: P,
+        file: Q,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
         let (file_name, metadata) = Self::normalize(path, file)?;
         Ok(Self {
             upload_id,
             file_name,
-            size: metadata.len()
+            size: metadata.len(),
         })
     }
 
     #[allow(dead_code)]
-    pub fn from_file_path<P: AsRef<Path>>(file_path: P, upload_id: Option<UploadId>) -> bf::Result<Self> {
+    pub fn from_file_path<P: AsRef<Path>>(
+        file_path: P,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
         let file_path = file_path.as_ref();
-        let path = file_path.parent()
-            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not destructure path: {:?}", file_path))))?;
-        let file = file_path.file_name()
-            .ok_or(bf::error::Error::IoError(io::Error::new(io::ErrorKind::Other, format!("Could not destructure path: {:?}", file_path))))?;
+        let path = file_path
+            .parent()
+            .ok_or(bf::error::Error::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", file_path),
+            )))?;
+        let file = file_path
+            .file_name()
+            .ok_or(bf::error::Error::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", file_path),
+            )))?;
         S3File::new(path, file, upload_id)
     }
 
@@ -210,11 +249,9 @@ impl S3File {
         Box::new(future::lazy(move || {
             let f = match fs::File::open(file_path) {
                 Ok(f) => f,
-                Err(e) => return future::err(e.into())
+                Err(e) => return future::err(e.into()),
             };
-            future::result(f.bytes()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(Into::into))
+            future::result(f.bytes().collect::<Result<Vec<_>, _>>().map_err(Into::into))
         }))
     }
 
@@ -222,7 +259,7 @@ impl S3File {
         let file_path = from_path.as_ref().join(self.file_name.clone());
         match file_chunks(file_path, self.size(), chunk_size) {
             Ok(ch) => into_stream_trait(stream::iter_ok(ch)),
-            Err(e) => into_stream_trait(stream::once(Err(e)))
+            Err(e) => into_stream_trait(stream::once(Err(e))),
         }
     }
 }
@@ -238,9 +275,9 @@ pub struct LegacyManifest {
     files: Vec<String>,
     file_group_path: String,
     destination: Option<String>,
-    dataset : model::DatasetId,
+    dataset: model::DatasetId,
     encryption_key_id: model::S3EncryptionKeyId,
-    append_to_package: bool
+    append_to_package: bool,
 }
 
 // A manifest generated by the current Nextflow ETL processor.
@@ -248,7 +285,7 @@ pub struct LegacyManifest {
 #[serde(rename_all = "camelCase")]
 pub struct ETLManifest {
     type_: ETLJobType,
-    content: ETLJob
+    content: ETLJob,
 }
 
 // An ETL processor job type
@@ -256,7 +293,7 @@ pub struct ETLManifest {
 #[serde(rename_all = "camelCase")]
 enum ETLJobType {
     Upload,
-    Append
+    Append,
 }
 
 // A manifest job, as generated by the Nextflow ETL processor.
@@ -271,7 +308,7 @@ struct ETLJob {
     uploaded_files: Vec<String>,
     upload_directory: String,
     storage_directory: String,
-    encryption_key: model::S3EncryptionKeyId
+    encryption_key: model::S3EncryptionKeyId,
 }
 
 // See `blackfynn-app/api/src/main/scala/com/blackfynn/uploads/Manifest.scala`
@@ -280,7 +317,7 @@ struct ETLJob {
 #[serde(untagged)]
 pub enum ManifestEntry {
     Legacy(LegacyManifest),
-    ETL(ETLManifest)
+    ETL(ETLManifest),
 }
 
 impl ManifestEntry {
@@ -289,7 +326,7 @@ impl ManifestEntry {
         use self::ManifestEntry::*;
         match self {
             &Legacy(ref manifest) => &manifest.files,
-            &ETL(ref manifest) => &manifest.content.uploaded_files
+            &ETL(ref manifest) => &manifest.content.uploaded_files,
         }
     }
 }
@@ -301,7 +338,7 @@ pub struct PackagePreview {
     package_name: String,
     import_id: ImportId,
     files: Vec<S3File>,
-    group_size: i64
+    group_size: i64,
 }
 
 impl PackagePreview {

@@ -4,7 +4,7 @@ The official Blackfynn Rust library.
 <table>
     <tr>
         <td><strong>Linux / OS X</strong></td>
-        <td><a href="" title="Travis Build Status"><img src="" alt="travis-badge"></img></a></td>
+        <td><a href="https://travis-ci.org/Blackfynn/blackfynn-rust" title="Travis Build Status"><img src="https://travis-ci.org/Blackfynn/blackfynn-rust.svg?branch=master" alt="travis-badge"></img></a></td>
     </tr>
     <tr>
         <td><strong>Windows</strong></td>

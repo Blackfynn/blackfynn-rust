@@ -1,7 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use chrono::{DateTime, Utc};
 use bf::model;
+use chrono::{DateTime, Utc};
 
 /// An identifier for a Blackfynn dataset.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ pub struct Dataset {
     #[serde(deserialize_with = "model::PackageType::deserialize")]
     package_type: Option<model::PackageType>,
     created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>
+    updated_at: DateTime<Utc>,
 }
 
 impl Dataset {

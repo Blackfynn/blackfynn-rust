@@ -11,12 +11,5 @@ pub use self::client::Blackfynn;
 pub use self::client::get::Get;
 pub use self::client::post::Post;
 pub use self::client::put::Put;
-pub use self::client::s3::{
-		S3_MIN_PART_SIZE,
-    MultipartUploadResult,
-    ProgressCallback,
-    ProgressUpdate,
-    UploadProgress,
-    UploadProgressIter,
-    S3Uploader
-};
+pub use self::client::s3::{MultipartUploadResult, ProgressCallback, ProgressUpdate, S3Uploader,
+                           S3_MIN_PART_SIZE, UploadProgress, UploadProgressIter};

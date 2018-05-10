@@ -11,7 +11,7 @@ pub struct Channel {
     unit: String,
     spike_duration: Option<i64>,
     channel_type: String,
-    group: Option<String>
+    group: Option<String>,
 }
 
 impl Channel {

@@ -6,5 +6,5 @@ use bf::model;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
-    pub content: model::Channel
+    pub content: model::Channel,
 }

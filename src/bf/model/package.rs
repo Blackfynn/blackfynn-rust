@@ -79,12 +79,13 @@ pub enum PackageType {
     Text,
     TimeSeries,
     Unknown,
-    Video
+    Video,
 }
 
 impl PackageType {
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<PackageType>, D::Error>
-        where D: Deserializer<'de>
+    where
+        D: Deserializer<'de>,
     {
         let s: Option<String> = Option::deserialize(deserializer)?;
         match s {
@@ -102,9 +103,9 @@ impl PackageType {
                 "TimeSeries" | "timeseries" | "TIMESERIES" => Ok(Some(PackageType::TimeSeries)),
                 "Unknown" | "unknown" | "UNKNOWN" => Ok(Some(PackageType::Unknown)),
                 "Video" | "video" | "VIDEO" => Ok(Some(PackageType::Video)),
-                _ => Err(de::Error::custom(format!("Invalid package type: {}", t)))
+                _ => Err(de::Error::custom(format!("Invalid package type: {}", t))),
             },
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 }
@@ -120,7 +121,7 @@ pub struct Package {
     #[serde(deserialize_with = "PackageType::deserialize")]
     package_type: Option<PackageType>,
     created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>
+    updated_at: DateTime<Utc>,
 }
 
 impl Package {

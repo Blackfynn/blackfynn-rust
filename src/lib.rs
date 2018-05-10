@@ -20,7 +20,7 @@ extern crate url;
 mod bf;
 
 // Publicly re-export:
-pub use bf::{api, error, model};
 pub use bf::api::Blackfynn;
 pub use bf::config::{Config, Environment};
 pub use bf::types::{Future, Result, Stream};
+pub use bf::{api, error, model};
