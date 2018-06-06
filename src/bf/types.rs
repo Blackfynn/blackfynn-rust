@@ -10,8 +10,8 @@ pub use bf::error::{Error, ErrorKind, Result, ResultExt};
 
 /// A `futures::future::Future` type parameterized by `bf::error::Error`
 #[allow(dead_code)]
-pub type Future<T> = Box<futures::Future<Item = T, Error = error::Error>>;
+pub type Future<T> = Box<futures::Future<Item = T, Error = error::Error> + Send>;
 
 /// A `futures::stream::Stream` type parameterized by `bf::error::Error`
 #[allow(dead_code)]
-pub type Stream<T> = Box<futures::stream::Stream<Item = T, Error = error::Error>>;
+pub type Stream<T> = Box<futures::stream::Stream<Item = T, Error = error::Error> + Send>;

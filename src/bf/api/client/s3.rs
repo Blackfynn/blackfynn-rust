@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::collections::hash_map;
 use std::iter;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use futures::*;
@@ -75,8 +75,8 @@ impl MultipartUploadResult {
 }
 
 /// An abstration of an active multipart upload to AWS S3.
-struct MultipartUploadFile {
-    s3_client: Rc<S3Client<StaticProvider>>,
+struct MultipartUploadFile<C: ProgressCallback> {
+    s3_client: Arc<S3Client<StaticProvider>>,
     file: S3File,
     import_id: ImportId,
     upload_id: Option<S3UploadId>,
@@ -84,17 +84,17 @@ struct MultipartUploadFile {
     key: S3Key,
     server_side_encryption: S3ServerSideEncryption,
     file_chunk_size: u64,
-    concurrent_limit: Cell<usize>,
-    bytes_sent: Rc<Cell<u64>>,
+    concurrent_limit: usize,
+    bytes_sent: Arc<Mutex<u64>>,
     total_bytes_requested: Cell<u64>,
     tx_progress: Sender<ProgressUpdate>,
-    cb: Rc<Box<ProgressCallback>>,
+    cb: Arc<Mutex<C>>,
 }
 
-impl MultipartUploadFile {
+impl <C> MultipartUploadFile<C> where C: 'static + ProgressCallback {
     #[allow(unknown_lints, too_many_arguments)]
-    fn new<C>(
-        s3_client: &Rc<S3Client<StaticProvider>>,
+    fn new(
+        s3_client: &Arc<S3Client<StaticProvider>>,
         file: S3File,
         import_id: ImportId,
         upload_id: Option<S3UploadId>,
@@ -104,12 +104,9 @@ impl MultipartUploadFile {
         server_side_encryption: S3ServerSideEncryption,
         tx_progress: Sender<ProgressUpdate>,
         cb: C,
-    ) -> Self
-    where
-        C: 'static + ProgressCallback,
-    {
+    ) -> Self {
         Self {
-            s3_client: Rc::clone(s3_client),
+            s3_client: Arc::clone(s3_client),
             file,
             import_id,
             upload_id,
@@ -117,11 +114,11 @@ impl MultipartUploadFile {
             bucket,
             key,
             server_side_encryption,
-            concurrent_limit: Cell::new(DEFAULT_CONCURRENCY_LIMIT),
-            bytes_sent: Rc::new(Cell::new(0)),
+            concurrent_limit: DEFAULT_CONCURRENCY_LIMIT,
+            bytes_sent: Arc::new(Mutex::new(0)),
             total_bytes_requested: Cell::new(0),
             tx_progress,
-            cb: Rc::new(Box::new(cb)),
+            cb: Arc::new(Mutex::new(cb)),
         }
     }
 
@@ -173,12 +170,6 @@ impl MultipartUploadFile {
         self.file_chunk_size
     }
 
-    /// Returns the cumulative number of bytes sent to AWS S3.
-    #[allow(dead_code)]
-    pub fn bytes_sent(&self) -> u64 {
-        self.bytes_sent.get()
-    }
-
     /// Returns the total number of bytes to be sent to AWS across all
     /// pending file uploads. Every time `upload_file` is called, this value
     /// is incremented with the size of the supplied file.
@@ -193,26 +184,25 @@ impl MultipartUploadFile {
         P: 'static + AsRef<Path>,
     {
         if let Some(upload_id) = self.upload_id.clone() {
-            let cb = Rc::clone(&self.cb);
+
+            let cb = Arc::clone(&self.cb);
             let import_id = self.import_id().clone();
             let file_path = path.as_ref().to_path_buf().join(self.file_name());
             let file_size = self.file_size();
-            let s3_client = Rc::clone(&self.s3_client);
+            let s3_client = Arc::clone(&self.s3_client);
             let s3_bucket: model::S3Bucket = self.bucket().clone();
             let s3_key: model::S3Key = self.key().clone();
-            let concurrent_limit = self.concurrent_limit.get();
+            let concurrent_limit = self.concurrent_limit;
 
             // Divide the file into chunks of size `file_chunk_size`:
-            let bytes_sent = Rc::clone(&self.bytes_sent);
+            let bytes_sent = Arc::clone(&self.bytes_sent);
             let tx_progress = self.tx_progress.clone();
 
             // Bump up the total number of bytes requested for upload with
             // the included file size:
-            self.total_bytes_requested
-                .replace(self.total_bytes_requested.get() + self.file.size());
+            self.total_bytes_requested.replace(self.total_bytes_requested.get() + self.file.size());
 
             let f = self.file.chunks(path.as_ref(), self.file_chunk_size())
-                //.fuse()
                 .map(move |mut chunk| {
                     let bytes = match chunk.read() {
                         Ok(bytes) => bytes,
@@ -220,7 +210,7 @@ impl MultipartUploadFile {
                     };
                     let n = bytes.len();
                     let part_number = chunk.part_number();
-                    let bytes_sent = Rc::clone(&bytes_sent);
+                    let bytes_sent = Arc::clone(&bytes_sent);
 
                     let request = rusoto_s3::UploadPartRequest {
                         body: Some(bytes),
@@ -232,31 +222,40 @@ impl MultipartUploadFile {
                         .. Default::default()
                     };
 
-                    let cb = Rc::clone(&cb);
-
+                    let cb = Arc::clone(&cb);
                     let tx_progress = tx_progress.clone();
-                    let s3_client = Rc::clone(&s3_client);
+                    let s3_client = Arc::clone(&s3_client);
                     let file_path = file_path.clone();
                     let import_id = import_id.clone();
 
                     let f = future::lazy(move || {
+                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
+                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         s3_client.upload_part(&request)
-                            .map(move |output| (output, part_number, cb ))
-                            .map_err(|e| bf::Error::with_chain(e, "upload parts"))
-                            .and_then(move |(part_output, part_number, cb )| {
+                            .sync()
+                            .into_future()
+                            .map(move |output| (output, part_number))
+                            .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:upload parts"))
+                            .and_then(move |(part_output, part_number)| {
+
                                 // Update the sent byte count and signal the fact.
                                 // If there's a send error, ignore it:
-                                bytes_sent.replace(bytes_sent.get() + (n as u64));
+                                let mut bytes_sent_ref = bytes_sent.lock().unwrap();
+                                *bytes_sent_ref += n as u64;
+                                let updated_bytes_sent: u64 = *bytes_sent_ref;
 
                                 let update = ProgressUpdate::new(part_number as usize,
                                     true,
                                     import_id,
                                     file_path,
-                                    bytes_sent.get(),
+                                    updated_bytes_sent,
                                     file_size);
 
+                                let progress = cb.lock().unwrap();
+
                                 // Call the provided progress callback with the update:
-                                cb.on_update(&update);
+                                progress.on_update(&update);
 
                                 // and send the actual update information to the progress update
                                 // channel:
@@ -276,6 +275,7 @@ impl MultipartUploadFile {
                 .buffer_unordered(concurrent_limit);
 
             into_stream_trait(f)
+
         } else {
             into_stream_trait(stream::once(
                 Err(bf::error::ErrorKind::S3MissingUploadId.into()),
@@ -290,18 +290,20 @@ impl MultipartUploadFile {
                 upload_id: upload_id.into(),
                 bucket: self.bucket().clone().into(),
                 key: self.key().clone().into(),
-                ..Default::default()
+                .. Default::default()
             };
-
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             let f = self.s3_client
                 .abort_multipart_upload(&request)
-                .map_err(|e| bf::Error::with_chain(e, "multipart upload abort"));
+                .sync()
+                .into_future()
+                .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload abort"));
 
             into_future_trait(f)
         } else {
-            into_future_trait(future::result(
-                Err(bf::error::ErrorKind::S3MissingUploadId.into()),
-            ))
+            into_future_trait(Err(bf::error::ErrorKind::S3MissingUploadId.into()).into_future())
         }
     }
 
@@ -320,18 +322,21 @@ impl MultipartUploadFile {
                 bucket: self.bucket().clone().into(),
                 key: self.key().clone().into(),
                 multipart_upload: Some(rusoto_s3::CompletedMultipartUpload { parts: Some(parts) }),
-                ..Default::default()
+                .. Default::default()
             };
 
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             let f = self.s3_client
                 .complete_multipart_upload(&request)
-                .map_err(|e| bf::Error::with_chain(e, "multipart upload complete"));
+                .sync()
+                .into_future()
+                .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload complete"));
 
             into_future_trait(f)
         } else {
-            into_future_trait(future::result(
-                Err(bf::error::ErrorKind::S3MissingUploadId.into()),
-            ))
+            into_future_trait(Err(bf::error::ErrorKind::S3MissingUploadId.into()).into_future())
         }
     }
 }
@@ -339,7 +344,7 @@ impl MultipartUploadFile {
 /// A trait defining a progress indicator callback. Every time a file part
 /// successfully completes, `update` will be called with new, update statistics
 /// for the file.
-pub trait ProgressCallback {
+pub trait ProgressCallback: Clone + Send {
     /// Called when an uploaded progress update occurs.
     fn on_update(&self, &ProgressUpdate);
 }
@@ -491,7 +496,7 @@ impl UploadProgress {
 /// An AWS S3 file uploader.
 pub struct S3Uploader {
     server_side_encryption: S3ServerSideEncryption,
-    s3_client: Rc<S3Client<StaticProvider>>,
+    s3_client: Arc<S3Client<StaticProvider>>,
     tx_progress: Sender<ProgressUpdate>,
     rx_progress: Option<Receiver<ProgressUpdate>>,
     file_chunk_size: u64,
@@ -507,7 +512,7 @@ impl S3Uploader {
         let (tx_progress, rx_progress) = channel::<ProgressUpdate>();
         Self {
             server_side_encryption,
-            s3_client: Rc::new(create_s3_client(access_key, secret_key, session_token)),
+            s3_client: Arc::new(create_s3_client(access_key, secret_key, session_token)),
             tx_progress,
             rx_progress: Some(rx_progress),
             file_chunk_size: S3_MIN_PART_SIZE,
@@ -555,7 +560,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Stream<ImportId>
     where
-        C: 'static + ProgressCallback + Clone,
+        C: 'static + ProgressCallback,
         P: 'static + AsRef<Path>,
     {
         // Divide the files into large and small groups. Large groups will be multipart uploaded.
@@ -596,7 +601,7 @@ impl S3Uploader {
         C: 'static + ProgressCallback,
         P: 'static + AsRef<Path>,
     {
-        let s3_client = Rc::clone(&self.s3_client);
+        let s3_client = Arc::clone(&self.s3_client);
 
         let s3_server_side_encryption: String = self.server_side_encryption.clone().into();
         let s3_encryption_key_id: String = credentials.encryption_key_id().clone().into();
@@ -620,9 +625,14 @@ impl S3Uploader {
                     server_side_encryption: Some(s3_server_side_encryption),
                     ..Default::default()
                 };
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 s3_client
                     .put_object(&request)
-                    .map_err(|e| bf::Error::with_chain(e, "S3 put object"))
+                    .sync()
+                    .into_future()
+                    .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:put object"))
             })
             .and_then(move |_| {
                 let update = ProgressUpdate::new(
@@ -652,7 +662,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Future<ImportId>
     where
-        C: 'static + ProgressCallback + Clone,
+        C: 'static + ProgressCallback,
         P: 'static + AsRef<Path>,
     {
         let ret_import_id = import_id.clone();
@@ -666,7 +676,7 @@ impl S3Uploader {
 
         let f = stream::futures_unordered(fs)
             .into_future()
-            .map_err(|(e, _)| bf::Error::with_chain(e, "S3 put objects"))
+            .map_err(|(e, _)| bf::Error::with_chain(e, "bf:api:s3:put objects"))
             .and_then(|_| Ok(ret_import_id));
 
         into_future_trait(f)
@@ -686,7 +696,7 @@ impl S3Uploader {
     {
         self.put_objects_cb(path, files, import_id, credentials, NoProgress)
     }
-
+    
     /// Initiates a multi-part file upload.
     fn begin_multipart_upload<C>(
         &self,
@@ -694,12 +704,14 @@ impl S3Uploader {
         import_id: ImportId,
         credentials: &UploadCredential,
         cb: C,
-    ) -> bf::Future<MultipartUploadFile>
+    ) -> bf::Future<MultipartUploadFile<C>>
     where
         C: 'static + ProgressCallback,
     {
-        // TODO(implement retry)
-        let s3_client = Rc::clone(&self.s3_client);
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // TODO: implement retry logic here
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        let s3_client = Arc::clone(&self.s3_client);
 
         let s3_server_side_encryption = self.server_side_encryption.clone();
         let s3_bucket: model::S3Bucket = credentials.s3_bucket().clone();
@@ -712,14 +724,19 @@ impl S3Uploader {
             bucket: s3_bucket.clone().into(),
             key: s3_key.clone().into(),
             server_side_encryption: Some(s3_server_side_encryption.clone().into()),
-            ..Default::default()
+            .. Default::default()
         };
 
         let tx_progress = self.tx_progress.clone();
         let file_chunk_size = self.file_chunk_size;
 
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         let f = s3_client
             .create_multipart_upload(&request)
+            .sync()
+            .into_future()
             .and_then(move |output: rusoto_s3::CreateMultipartUploadOutput| {
                 Ok(MultipartUploadFile::new(
                     &s3_client,
@@ -734,7 +751,7 @@ impl S3Uploader {
                     cb,
                 ))
             })
-            .map_err(|e| bf::Error::with_chain(e, "begin multipart upload"));
+            .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:begin multipart upload"));
 
         into_future_trait(f)
     }
@@ -750,18 +767,18 @@ impl S3Uploader {
     ) -> bf::Future<MultipartUploadResult>
     where
         C: 'static + ProgressCallback,
-        P: 'static + AsRef<Path>,
+        P: 'static + Send + AsRef<Path>,
     {
         let f = self.begin_multipart_upload(file, import_id.clone(), &credentials, cb)
-            .join(future::ok(path))
-            .and_then(move |(multipart, path): (MultipartUploadFile, P)| {
+            .join(Ok(path))
+            .and_then(move |(multipart, path): (MultipartUploadFile<C>, P)| {
                 // Divide the file into parts of size `chunk_size`, and upload each part.
                 multipart.upload_parts(path).collect().then(
-                    move |result: bf::Result<Vec<rusoto_s3::CompletedPart>>| {
+                    move |result| {
                         match result {
                             // if all of the parts were received successfully, attempt to complete it:
                             Ok(parts) => {
-                                let f = multipart
+                                into_future_trait(multipart
                                     .complete(parts)
                                     .map(|output| {
                                         MultipartUploadResult::Complete(import_id, output)
@@ -770,18 +787,14 @@ impl S3Uploader {
                                         multipart
                                             .abort()
                                             .map(|output| MultipartUploadResult::Abort(err, output))
-                                    });
-
-                                into_future_trait(f)
+                                    }))
                             }
                             // otherwise, abort the whole upload:
                             Err(err) => {
-                                let f = multipart
+                                into_future_trait(multipart
                                     .abort()
                                     .map(|output| MultipartUploadResult::Abort(err, output))
-                                    .or_else(Err);
-
-                                into_future_trait(f)
+                                    .or_else(Err))
                             }
                         }
                     },
@@ -802,7 +815,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Stream<MultipartUploadResult>
     where
-        C: 'static + ProgressCallback + Clone,
+        C: 'static + ProgressCallback,
         P: 'static + AsRef<Path>,
     {
         let fs = files
@@ -818,9 +831,7 @@ impl S3Uploader {
                 )
             });
 
-        let s = stream::futures_unordered(fs);
-
-        into_stream_trait(s)
+        into_stream_trait(stream::futures_unordered(fs))
     }
 
     /// Initiates a multi-part upload for multiple files.

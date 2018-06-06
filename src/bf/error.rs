@@ -3,6 +3,8 @@
 //! Errors specific to the Blackfynn platform.
 use std::{io, path};
 
+use futures;
+
 use hyper;
 
 use rusoto_s3;
@@ -17,6 +19,7 @@ error_chain! {
     }
 
     foreign_links {
+        Cancelled(futures::Canceled);
         HttpError(hyper::error::Error);
         IoError(io::Error);
         JsonError(serde_json::Error);
@@ -25,7 +28,6 @@ error_chain! {
         S3CompleteMultipartUploadError(rusoto_s3::CompleteMultipartUploadError);
         S3PutObjectError(rusoto_s3::PutObjectError);
         S3UploadPartError(rusoto_s3::UploadPartError);
-        UriError(hyper::error::UriError);
         UrlParseError(url::ParseError);
     }
 
