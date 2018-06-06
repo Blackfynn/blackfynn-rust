@@ -28,7 +28,7 @@ impl Environment {
                     env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
                 api_loc
                     .parse::<Url>()
-                    .expect(&format!("Not a valid url: {}", api_loc))
+                    .unwrap_or_else(|_| panic!("Not a valid url: {}", api_loc))
             }
             Development => "https://dev.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
             Production => "https://api.blackfynn.io".parse::<Url>().unwrap(), // This should never fail

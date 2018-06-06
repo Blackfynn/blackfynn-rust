@@ -6,7 +6,7 @@ use std::{cmp, fs};
 
 use futures::*;
 
-use bf::util::futures::into_stream_trait;
+use bf::util::futures::{into_future_trait, into_stream_trait};
 use bf::{self, model};
 
 /// An identifier returned by the Blackfynn platform used to group
@@ -220,7 +220,7 @@ impl S3File {
                 io::Error::new(
                     io::ErrorKind::Other,
                     format!("Could not destructure path: {:?}", file_path),
-                ).into(),
+                ),
             )
         })?;
         let file = file_path.file_name().ok_or_else(|| {
@@ -228,7 +228,7 @@ impl S3File {
                 io::Error::new(
                     io::ErrorKind::Other,
                     format!("Could not destructure path: {:?}", file_path),
-                ).into(),
+                ),
             )
         })?;
         S3File::new(path, file, upload_id)
@@ -252,12 +252,15 @@ impl S3File {
     #[allow(dead_code)]
     pub fn read_bytes<P: AsRef<Path>>(&self, from_path: P) -> bf::Future<Vec<u8>> {
         let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
-        Box::new(future::lazy(move || {
+        into_future_trait(future::lazy(move || {
             let f = match fs::File::open(file_path) {
                 Ok(f) => f,
                 Err(e) => return future::err(e.into()),
             };
-            future::result(f.bytes().collect::<Result<Vec<_>, _>>().map_err(Into::into))
+            f.bytes()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into)
+                .into_future()
         }))
     }
 
