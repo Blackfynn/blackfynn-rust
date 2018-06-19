@@ -216,20 +216,16 @@ impl S3File {
     ) -> bf::Result<Self> {
         let file_path = file_path.as_ref();
         let path = file_path.parent().ok_or_else(|| {
-            bf::error::ErrorKind::IoError(
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Could not destructure path: {:?}", file_path),
-                ),
-            )
+            bf::error::ErrorKind::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", file_path),
+            ))
         })?;
         let file = file_path.file_name().ok_or_else(|| {
-            bf::error::ErrorKind::IoError(
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Could not destructure path: {:?}", file_path),
-                ),
-            )
+            bf::error::ErrorKind::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", file_path),
+            ))
         })?;
         S3File::new(path, file, upload_id)
     }

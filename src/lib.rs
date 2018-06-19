@@ -4,16 +4,19 @@
 #![recursion_limit = "1024"]
 
 extern crate chrono;
-#[macro_use] extern crate error_chain;
+#[macro_use]
+extern crate error_chain;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
-#[macro_use] extern crate lazy_static;
+#[macro_use]
+extern crate lazy_static;
 extern crate rusoto_core;
 extern crate rusoto_credential;
 extern crate rusoto_s3;
 extern crate serde;
-#[macro_use] extern crate serde_derive;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
 extern crate tokio;
 extern crate url;
