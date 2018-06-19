@@ -26,7 +26,7 @@ use bf;
 use bf::config::Config;
 use bf::model::{self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken,
                 TemporaryCredential};
-use bf::util::futures::{into_future_trait};
+use bf::util::futures::into_future_trait;
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
@@ -69,28 +69,37 @@ macro_rules! route {
 }
 
 macro_rules! param {
-    ($key:expr, $value:expr) => (
+    ($key:expr, $value:expr) => {
         ($key.into(), $value.into())
-    )
+    };
 }
 
 macro_rules! get {
     ($target:expr, $route:expr) => {
         $target.request($route, hyper::Method::GET, vec![], None as Option<&Nothing>)
-    }
+    };
 }
-
 
 macro_rules! post {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::POST, vec![], None as Option<&Nothing>)
+        $target.request(
+            $route,
+            hyper::Method::POST,
+            vec![],
+            None as Option<&Nothing>,
+        )
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::POST, $params, None as Option<&Nothing>)
+        $target.request(
+            $route,
+            hyper::Method::POST,
+            $params,
+            None as Option<&Nothing>,
+        )
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
         $target.request($route, hyper::Method::POST, $params, Some($payload))
-    }
+    };
 }
 
 macro_rules! put {
@@ -98,11 +107,16 @@ macro_rules! put {
         $target.request($route, hyper::Method::PUT, vec![], None as Option<&Nothing>)
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, None as Option<&Nothing>)
+        $target.request(
+            $route,
+            hyper::Method::PUT,
+            $params,
+            None as Option<&Nothing>,
+        )
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
         $target.request($route, hyper::Method::PUT, $params, Some($payload))
-    }
+    };
 }
 
 // ============================================================================
@@ -173,7 +187,7 @@ impl Blackfynn {
 
         let body: Result<hyper::Body, serde_json::Error> = match payload {
             Some(p) => serde_json::to_string(p).map(Into::into),
-            None => Ok(hyper::Body::empty())
+            None => Ok(hyper::Body::empty()),
         };
 
         let body = future::result::<_, bf::error::Error>(body.map_err(Into::into))
@@ -194,7 +208,7 @@ impl Blackfynn {
                         hyper::header::HeaderValue::from_str(session_token.as_ref()).unwrap(),
                     );
                 }
-                // By default make every content type "application/json"                
+                // By default make every content type "application/json"
                 req.headers_mut().insert(
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
@@ -231,7 +245,13 @@ impl Blackfynn {
                         // Finally, attempt to parse the JSON response into a typeful representation:
                         serde_json::from_slice::<Q>(&body).map_err(move |e| {
                             let as_bytes: Vec<u8> = body.to_vec();
-                            bf::Error::with_chain(e, format!("bf:request:serialize - {}", String::from_utf8_lossy(&as_bytes).to_string()))
+                            bf::Error::with_chain(
+                                e,
+                                format!(
+                                    "bf:request:serialize - {}",
+                                    String::from_utf8_lossy(&as_bytes).to_string()
+                                ),
+                            )
                         })
                     })
             });
@@ -261,7 +281,7 @@ impl Blackfynn {
     fn run<F, T>(&self, runner: F) -> bf::Result<T>
     where
         F: Fn(Blackfynn) -> bf::Future<T>,
-        T: 'static + Send
+        T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(runner(self.clone()))
@@ -298,11 +318,15 @@ impl Blackfynn {
     ) -> bf::Future<response::ApiSession> {
         let payload = request::ApiLogin::new(api_key.into(), api_secret.into());
         let this = self.clone();
-        into_future_trait(post!(self, "/account/api/session", vec![], &payload)
-            .and_then(move |login_response: response::ApiSession| {
-                this.inner.lock().unwrap().session_token = Some(login_response.session_token().clone());
-                Ok(login_response)
-            }))
+        into_future_trait(
+            post!(self, "/account/api/session", vec![], &payload).and_then(
+                move |login_response: response::ApiSession| {
+                    this.inner.lock().unwrap().session_token =
+                        Some(login_response.session_token().clone());
+                    Ok(login_response)
+                },
+            ),
+        )
     }
 
     /// Return a Future, that when, resolved returns the user
@@ -313,17 +337,21 @@ impl Blackfynn {
 
     /// Return a Future, that when, resolved sets the current user preferred organization
     /// and returns the updated user.
-    pub fn set_preferred_organization(&self, organization_id: Option<OrganizationId>) -> bf::Future<model::User> {
+    pub fn set_preferred_organization(
+        &self,
+        organization_id: Option<OrganizationId>,
+    ) -> bf::Future<model::User> {
         let this = self.clone();
         let user = request::User {
             organization: organization_id.map(Into::into),
             ..Default::default()
         };
-        into_future_trait(put!(self, "/user/", vec![], &user)
-            .and_then(move |user_response: model::User| {
+        into_future_trait(put!(self, "/user/", vec![], &user).and_then(
+            move |user_response: model::User| {
                 this.set_current_organization(user_response.preferred_organization());
                 Ok(user_response)
-            }))
+            },
+        ))
     }
 
     /// Return a Future, that when, resolved returns a listing of the
@@ -355,7 +383,10 @@ impl Blackfynn {
 
     /// Grant temporary upload access to the specific dataset for the current session.
     pub fn grant_upload(&self, dataset_id: DatasetId) -> bf::Future<response::UploadCredential> {
-        get!(self, route!("/security/user/credentials/upload/{dataset_id}", dataset_id))
+        get!(
+            self,
+            route!("/security/user/credentials/upload/{dataset_id}", dataset_id)
+        )
     }
 
     /// Grant temporary streaming access for the current session.
@@ -364,7 +395,12 @@ impl Blackfynn {
     }
 
     /// Generate a preview of the files to be uploaded.
-    pub fn preview_upload<P, Q>(&self, path: P, files: &[Q], append: bool) -> bf::Future<response::UploadPreview>
+    pub fn preview_upload<P, Q>(
+        &self,
+        path: P,
+        files: &[Q],
+        append: bool,
+    ) -> bf::Future<response::UploadPreview>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
@@ -382,10 +418,12 @@ impl Blackfynn {
             Err(e) => return into_future_trait(future::err(e)),
         };
 
-        post!(self, 
-              "/files/upload/preview", 
-              vec![param!("append", if append { "true" } else { "false" })],
-              &request::UploadPreview::new(&s3_files))
+        post!(
+            self,
+            "/files/upload/preview",
+            vec![param!("append", if append { "true" } else { "false" })],
+            &request::UploadPreview::new(&s3_files)
+        )
     }
 
     /// Returns a S3 uploader.  
@@ -418,7 +456,11 @@ impl Blackfynn {
             params.push(param!("destinationId", dest_id.clone()));
         }
 
-        post!(self, route!("/files/upload/complete/{import_id}", import_id), params)
+        post!(
+            self,
+            route!("/files/upload/complete/{import_id}", import_id),
+            params
+        )
     }
 }
 
@@ -427,7 +469,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::fmt::Debug;
-    use std::{cell, fs, path, thread, sync, time};
+    use std::{cell, fs, path, sync, thread, time};
 
     use bf::api::client::s3::MultipartUploadResult;
     use bf::config::Environment;
@@ -501,8 +543,10 @@ mod tests {
     #[test]
     fn fetching_organizations_after_login_is_successful() {
         let org = bf().run(move |bf| {
-            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| bf.organizations()))
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.organizations()),
+            )
         });
 
         if org.is_err() {
@@ -612,7 +656,7 @@ mod tests {
         });
         if package.is_err() {
             panic!("{}", package.unwrap_err().display_chain().to_string());
-        }        
+        }
     }
 
     #[test]
@@ -620,7 +664,7 @@ mod tests {
         let package = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.package_by_id(PackageId::new("invalid_package_id")))
+                    .and_then(move |_| bf.package_by_id(PackageId::new("invalid_package_id"))),
             )
         });
 
@@ -826,7 +870,6 @@ mod tests {
 
     #[test]
     fn multipart_big_file_uploading() {
-
         struct Inner(sync::Mutex<bool>);
 
         impl Inner {
@@ -836,13 +879,13 @@ mod tests {
         }
 
         struct ProgressIndicator {
-            inner: sync::Arc<Inner>
+            inner: sync::Arc<Inner>,
         }
 
         impl Clone for ProgressIndicator {
             fn clone(&self) -> Self {
                 Self {
-                    inner: Arc::clone(&self.inner)
+                    inner: Arc::clone(&self.inner),
                 }
             }
         }
@@ -850,7 +893,7 @@ mod tests {
         impl ProgressIndicator {
             pub fn new() -> Self {
                 Self {
-                    inner: sync::Arc::new(Inner::new())
+                    inner: sync::Arc::new(Inner::new()),
                 }
             }
         }
