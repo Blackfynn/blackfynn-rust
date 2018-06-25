@@ -1,12 +1,12 @@
 [package]
 name = "blackfynn"
-version = "0.1.17"
+version = "0.1.18"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
 
 [dependencies]
 chrono = { version = "^0.4", features = ["serde"] }
-error-chain = "^0.11"
+error-chain = "^0.12"
 futures = "^0.1"
 hyper = "^0.12"
 hyper-tls = "^0.2"
