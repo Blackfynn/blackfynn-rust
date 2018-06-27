@@ -11,11 +11,15 @@ futures = "^0.1"
 hyper = "^0.12"
 hyper-tls = "^0.2"
 lazy_static = "^1.0"
-rusoto_core = "^0.32"
-rusoto_credential = "^0.11"
-rusoto_s3 = "^0.32"
+#rusoto_core = "^0.32"
+rusoto_core = { git = "https://github.com/bkchr/rusoto", branch = "make_future_send" }
+#rusoto_credential = "0.11"
+rusoto_credential = { git = "https://github.com/bkchr/rusoto", branch = "make_future_send" }
+#rusoto_s3 = "0.32"
+rusoto_s3 = { git = "https://github.com/bkchr/rusoto", branch = "make_future_send" }
 serde = "^1.0"
 serde_derive = "^1.0"
 serde_json = "^1.0"
 tokio = "^0.1"
 url = "^1.7"
+	

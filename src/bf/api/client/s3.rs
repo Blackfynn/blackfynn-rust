@@ -217,7 +217,7 @@ where
                     let bytes_sent = Arc::clone(&bytes_sent);
 
                     let request = rusoto_s3::UploadPartRequest {
-                        body: Some(bytes),
+                        body: Some(bytes.into()),
                         bucket: s3_bucket.clone().into(),
                         content_length: Some(n as i64),
                         key: s3_key.clone().into(),
@@ -233,13 +233,8 @@ where
                     let import_id = import_id.clone();
 
                     let f = future::lazy(move || {
-                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         s3_client
-                            .upload_part(&request)
-                            .sync()
-                            .into_future()
+                            .upload_part(request)
                             .map(move |output| (output, part_number))
                             .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:upload parts"))
                             .and_then(move |(part_output, part_number)| {
@@ -297,13 +292,8 @@ where
                 key: self.key().clone().into(),
                 ..Default::default()
             };
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             let f = self.s3_client
-                .abort_multipart_upload(&request)
-                .sync()
-                .into_future()
+                .abort_multipart_upload(request)
                 .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload abort"));
 
             into_future_trait(f)
@@ -330,13 +320,8 @@ where
                 ..Default::default()
             };
 
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             let f = self.s3_client
-                .complete_multipart_upload(&request)
-                .sync()
-                .into_future()
+                .complete_multipart_upload(request)
                 .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload complete"));
 
             into_future_trait(f)
@@ -623,20 +608,15 @@ impl S3Uploader {
         let f = file.read_bytes(path.as_ref())
             .and_then(move |contents: Vec<u8>| {
                 let request = rusoto_s3::PutObjectRequest {
-                    body: Some(contents),
+                    body: Some(contents.into()),
                     bucket: s3_bucket.into(),
                     key: s3_key.into(),
                     ssekms_key_id: Some(s3_encryption_key_id),
                     server_side_encryption: Some(s3_server_side_encryption),
                     ..Default::default()
                 };
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 s3_client
-                    .put_object(&request)
-                    .sync()
-                    .into_future()
+                    .put_object(request)
                     .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:put object"))
             })
             .and_then(move |_| {
@@ -735,13 +715,8 @@ impl S3Uploader {
         let tx_progress = self.tx_progress.clone();
         let file_chunk_size = self.file_chunk_size;
 
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         let f = s3_client
-            .create_multipart_upload(&request)
-            .sync()
-            .into_future()
+            .create_multipart_upload(request)
             .and_then(move |output: rusoto_s3::CreateMultipartUploadOutput| {
                 Ok(MultipartUploadFile::new(
                     &s3_client,
