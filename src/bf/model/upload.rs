@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     pub fn nonempty_file_chunking_works() {
-        let path = file!();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
         let metadata = File::open(path).unwrap().metadata().unwrap();
         let result = file_chunks(path, metadata.len(), USE_CHUNK_SIZE);
         assert!(result.is_ok());
