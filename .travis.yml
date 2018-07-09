@@ -11,4 +11,4 @@ before_script:
 script:
   - cargo update
   - cargo fmt --all -- --write-mode=diff
-  - cargo test
+  - RUST_BACKTRACE=1 cargo test
