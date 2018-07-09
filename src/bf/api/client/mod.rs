@@ -426,7 +426,7 @@ impl Blackfynn {
         )
     }
 
-    /// Returns a S3 uploader.  
+    /// Returns a S3 uploader.
     pub fn s3_uploader(&self, creds: TemporaryCredential) -> S3Uploader {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(

@@ -15,4 +15,5 @@ install:
 build: false
 
 test_script:
+  - cargo update
   - cargo test --verbose %cargoflags%
