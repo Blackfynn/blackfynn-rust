@@ -6,6 +6,9 @@ rust:
 os:
   - linux
   - osx
+branches:
+  only:
+    - master
 before_script:
   - rustup component add rustfmt-preview
 script:
