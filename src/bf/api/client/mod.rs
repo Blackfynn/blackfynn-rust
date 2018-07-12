@@ -4,8 +4,10 @@
 
 pub mod s3;
 
-pub use self::s3::{MultipartUploadResult, ProgressCallback, ProgressUpdate, S3Uploader,
-                   UploadProgress, UploadProgressIter};
+pub use self::s3::{
+    MultipartUploadResult, ProgressCallback, ProgressUpdate, S3Uploader, UploadProgress,
+    UploadProgressIter,
+};
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -24,8 +26,9 @@ use tokio;
 use super::{request, response};
 use bf;
 use bf::config::Config;
-use bf::model::{self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken,
-                TemporaryCredential};
+use bf::model::{
+    self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential,
+};
 use bf::util::futures::into_future_trait;
 
 // Blackfynn session authentication header:

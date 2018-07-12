@@ -17,8 +17,10 @@ use rusoto_s3::{self, S3, S3Client};
 
 use bf;
 use bf::model;
-use bf::model::{AccessKey, ImportId, S3Bucket, S3File, S3Key, S3ServerSideEncryption, S3UploadId,
-                SecretKey, SessionToken, UploadCredential};
+use bf::model::{
+    AccessKey, ImportId, S3Bucket, S3File, S3Key, S3ServerSideEncryption, S3UploadId, SecretKey,
+    SessionToken, UploadCredential,
+};
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
 const KB: u64 = 1024;
@@ -282,9 +284,9 @@ where
 
             into_stream_trait(f)
         } else {
-            into_stream_trait(stream::once(
-                Err(bf::error::ErrorKind::S3MissingUploadId.into()),
-            ))
+            into_stream_trait(stream::once(Err(
+                bf::error::ErrorKind::S3MissingUploadId.into()
+            )))
         }
     }
 

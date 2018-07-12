@@ -15,8 +15,10 @@ mod user;
 
 // Re-export
 pub use self::account::SessionToken;
-pub use self::aws::{AccessKey, S3Bucket, S3EncryptionKeyId, S3Key, S3ServerSideEncryption,
-                    S3UploadId, S3UploadKey, SecretKey};
+pub use self::aws::{
+    AccessKey, S3Bucket, S3EncryptionKeyId, S3Key, S3ServerSideEncryption, S3UploadId, S3UploadKey,
+    SecretKey,
+};
 pub use self::channel::Channel;
 pub use self::dataset::{Dataset, DatasetId};
 pub use self::file::File;
