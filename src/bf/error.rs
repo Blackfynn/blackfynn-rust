@@ -7,6 +7,8 @@ use futures;
 
 use hyper;
 
+use rusoto_core;
+
 use rusoto_s3;
 
 use serde_json;
@@ -28,6 +30,7 @@ error_chain! {
         S3CompleteMultipartUploadError(rusoto_s3::CompleteMultipartUploadError);
         S3PutObjectError(rusoto_s3::PutObjectError);
         S3UploadPartError(rusoto_s3::UploadPartError);
+        TlsError(rusoto_core::request::TlsError);
         UrlParseError(url::ParseError);
     }
 

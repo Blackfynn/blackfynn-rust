@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::*;
 
-use rusoto_core::reactor::RequestDispatcher;
+use rusoto_core::request::HttpClient;
 use rusoto_credential::StaticProvider;
 use rusoto_s3::{self, S3, S3Client};
 
@@ -35,18 +35,16 @@ fn create_s3_client(
     access_key: AccessKey,
     secret_key: SecretKey,
     session_token: SessionToken,
-) -> S3Client<StaticProvider> {
+) -> bf::Result<S3Client> {
     let credentials_provider = StaticProvider::new(
         access_key.into(),
         secret_key.into(),
         Some(Into::<String>::into(session_token)),
         None,
     );
-    S3Client::new(
-        RequestDispatcher::default(),
-        credentials_provider,
-        Default::default(),
-    )
+    let client = HttpClient::new().map_err(|e| bf::Error::with_chain(e, "s3::create_s3_client"))?;
+    let region = Default::default();
+    Ok(S3Client::new_with(client, credentials_provider, region))
 }
 
 /// The possible outcomes of a multipart upload.
@@ -78,7 +76,7 @@ impl MultipartUploadResult {
 
 /// An abstration of an active multipart upload to AWS S3.
 struct MultipartUploadFile<C: ProgressCallback> {
-    s3_client: Arc<S3Client<StaticProvider>>,
+    s3_client: Arc<S3Client>,
     file: S3File,
     import_id: ImportId,
     upload_id: Option<S3UploadId>,
@@ -99,7 +97,7 @@ where
 {
     #[allow(unknown_lints, too_many_arguments)]
     fn new(
-        s3_client: &Arc<S3Client<StaticProvider>>,
+        s3_client: &Arc<S3Client>,
         file: S3File,
         import_id: ImportId,
         upload_id: Option<S3UploadId>,
@@ -207,7 +205,8 @@ where
             self.total_bytes_requested
                 .replace(self.total_bytes_requested.get() + self.file.size());
 
-            let f = self.file
+            let f = self
+                .file
                 .chunks(path.as_ref(), self.file_chunk_size())
                 .map(move |mut chunk| {
                     let bytes = match chunk.read() {
@@ -219,7 +218,7 @@ where
                     let bytes_sent = Arc::clone(&bytes_sent);
 
                     let request = rusoto_s3::UploadPartRequest {
-                        body: Some(bytes),
+                        body: Some(bytes.into()),
                         bucket: s3_bucket.clone().into(),
                         content_length: Some(n as i64),
                         key: s3_key.clone().into(),
@@ -235,13 +234,8 @@ where
                     let import_id = import_id.clone();
 
                     let f = future::lazy(move || {
-                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-                        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                         s3_client
-                            .upload_part(&request)
-                            .sync()
-                            .into_future()
+                            .upload_part(request)
                             .map(move |output| (output, part_number))
                             .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:upload parts"))
                             .and_then(move |(part_output, part_number)| {
@@ -299,13 +293,9 @@ where
                 key: self.key().clone().into(),
                 ..Default::default()
             };
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            let f = self.s3_client
-                .abort_multipart_upload(&request)
-                .sync()
-                .into_future()
+            let f = self
+                .s3_client
+                .abort_multipart_upload(request)
                 .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload abort"));
 
             into_future_trait(f)
@@ -332,13 +322,9 @@ where
                 ..Default::default()
             };
 
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            let f = self.s3_client
-                .complete_multipart_upload(&request)
-                .sync()
-                .into_future()
+            let f = self
+                .s3_client
+                .complete_multipart_upload(request)
                 .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:multipart upload complete"));
 
             into_future_trait(f)
@@ -503,7 +489,7 @@ impl UploadProgress {
 /// An AWS S3 file uploader.
 pub struct S3Uploader {
     server_side_encryption: S3ServerSideEncryption,
-    s3_client: Arc<S3Client<StaticProvider>>,
+    s3_client: Arc<S3Client>,
     tx_progress: Sender<ProgressUpdate>,
     rx_progress: Option<Receiver<ProgressUpdate>>,
     file_chunk_size: u64,
@@ -515,15 +501,16 @@ impl S3Uploader {
         access_key: AccessKey,
         secret_key: SecretKey,
         session_token: SessionToken,
-    ) -> Self {
+    ) -> bf::Result<Self> {
         let (tx_progress, rx_progress) = channel::<ProgressUpdate>();
-        Self {
+        let s3_client = create_s3_client(access_key, secret_key, session_token)?;
+        Ok(Self {
             server_side_encryption,
-            s3_client: Arc::new(create_s3_client(access_key, secret_key, session_token)),
+            s3_client: Arc::new(s3_client),
             tx_progress,
             rx_progress: Some(rx_progress),
             file_chunk_size: S3_MIN_PART_SIZE,
-        }
+        })
     }
 
     /// Returns a file uploade progress poller.
@@ -575,21 +562,22 @@ impl S3Uploader {
             .into_iter()
             .partition(|file| file.size() < S3_MIN_PART_SIZE);
 
-        let s = self.multipart_upload_files_cb(
-            path.as_ref().to_path_buf(),
-            &large_s3_files,
-            import_id.clone(),
-            credentials.clone(),
-            cb.clone(),
-        ).map(move |result| match result {
-                MultipartUploadResult::Complete(import_id, _) => stream::once(Ok(import_id)),
-                MultipartUploadResult::Abort(reason, _) => stream::once(Err(reason)),
-            })
-            .flatten()
-            .chain(
-                self.put_objects_cb(path, &small_s3_files, import_id, credentials, cb)
-                    .into_stream(),
-            );
+        let s =
+            self.multipart_upload_files_cb(
+                path.as_ref().to_path_buf(),
+                &large_s3_files,
+                import_id.clone(),
+                credentials.clone(),
+                cb.clone(),
+            ).map(move |result| match result {
+                    MultipartUploadResult::Complete(import_id, _) => stream::once(Ok(import_id)),
+                    MultipartUploadResult::Abort(reason, _) => stream::once(Err(reason)),
+                })
+                .flatten()
+                .chain(
+                    self.put_objects_cb(path, &small_s3_files, import_id, credentials, cb)
+                        .into_stream(),
+                );
 
         into_stream_trait(s)
     }
@@ -622,23 +610,19 @@ impl S3Uploader {
 
         // Read the contents of the file as a byte vector and use the AWS
         // S3 Put Object Request to perform the actual upload:
-        let f = file.read_bytes(path.as_ref())
+        let f = file
+            .read_bytes(path.as_ref())
             .and_then(move |contents: Vec<u8>| {
                 let request = rusoto_s3::PutObjectRequest {
-                    body: Some(contents),
+                    body: Some(contents.into()),
                     bucket: s3_bucket.into(),
                     key: s3_key.into(),
                     ssekms_key_id: Some(s3_encryption_key_id),
                     server_side_encryption: Some(s3_server_side_encryption),
                     ..Default::default()
                 };
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 s3_client
-                    .put_object(&request)
-                    .sync()
-                    .into_future()
+                    .put_object(request)
                     .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:put object"))
             })
             .and_then(move |_| {
@@ -737,13 +721,8 @@ impl S3Uploader {
         let tx_progress = self.tx_progress.clone();
         let file_chunk_size = self.file_chunk_size;
 
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // TODO: REMOVE sync() after rusoto `RusotoFuture` implements Send!
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         let f = s3_client
-            .create_multipart_upload(&request)
-            .sync()
-            .into_future()
+            .create_multipart_upload(request)
             .and_then(move |output: rusoto_s3::CreateMultipartUploadOutput| {
                 Ok(MultipartUploadFile::new(
                     &s3_client,
@@ -776,7 +755,8 @@ impl S3Uploader {
         C: 'static + ProgressCallback,
         P: 'static + Send + AsRef<Path>,
     {
-        let f = self.begin_multipart_upload(file, import_id.clone(), &credentials, cb)
+        let f = self
+            .begin_multipart_upload(file, import_id.clone(), &credentials, cb)
             .join(Ok(path))
             .and_then(move |(multipart, path): (MultipartUploadFile<C>, P)| {
                 // Divide the file into parts of size `chunk_size`, and upload each part.

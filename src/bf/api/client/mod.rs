@@ -196,7 +196,8 @@ impl Blackfynn {
         let body = future::result::<_, bf::error::Error>(body.map_err(Into::into))
             .map_err(|e| bf::Error::with_chain(e, "bf:request:body"));
 
-        let f = uri.join(body)
+        let f = uri
+            .join(body)
             .and_then(move |(uri, body): (hyper::Uri, hyper::Body)| {
                 let mut req = hyper::Request::builder()
                     .method(method)
@@ -286,7 +287,7 @@ impl Blackfynn {
         F: Fn(Blackfynn) -> bf::Future<T>,
         T: 'static + Send,
     {
-        let mut rt = tokio::runtime::Runtime::new().unwrap();
+        let mut rt = tokio::runtime::Runtime::new()?;
         rt.block_on(runner(self.clone()))
     }
 
@@ -430,7 +431,7 @@ impl Blackfynn {
     }
 
     /// Returns a S3 uploader.
-    pub fn s3_uploader(&self, creds: TemporaryCredential) -> S3Uploader {
+    pub fn s3_uploader(&self, creds: TemporaryCredential) -> bf::Result<S3Uploader> {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(
             self.inner
@@ -452,7 +453,7 @@ impl Blackfynn {
         dataset_id: DatasetId,
         destination_id: Option<&PackageId>,
         append: bool,
-    ) -> bf::Future<response::Manifest> {
+    ) -> bf::Future<response::Manifests> {
         let mut params = vec![param!("append", if append { "true" } else { "false" })];
         params.push(param!("datasetId", dataset_id));
         if let Some(dest_id) = destination_id {
@@ -675,7 +676,7 @@ mod tests {
             match e {
                 // blackfynn api returns 403 in this case..it should really be 404 I think
                 bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
-                    assert_eq!(status.as_u16(), 403)
+                    assert_eq!(status.as_u16(), 404)
                 }
                 _ => assert!(false),
             }
@@ -764,12 +765,13 @@ mod tests {
             )(bf)
                 .and_then(move |(scaffold, bf)| {
                 let upload_credential = scaffold.upload_credential.clone();
-                let uploader = bf.s3_uploader(
-                    scaffold
-                        .upload_credential
-                        .into_inner()
-                        .take_temp_credentials(),
-                );
+                let uploader =
+                    bf.s3_uploader(
+                        scaffold
+                            .upload_credential
+                            .into_inner()
+                            .take_temp_credentials(),
+                    ).unwrap();
                 stream::futures_unordered(scaffold.preview.into_iter().map(move |package| {
                     let upload_credential = upload_credential.clone();
                     // Simple, non-multipart uploading:
@@ -818,12 +820,13 @@ mod tests {
             )(bf)
                 .and_then(move |(scaffold, bf)| {
                 let cred = scaffold.upload_credential.clone();
-                let uploader = bf.s3_uploader(
-                    scaffold
-                        .upload_credential
-                        .into_inner()
-                        .take_temp_credentials(),
-                );
+                let uploader =
+                    bf.s3_uploader(
+                        scaffold
+                            .upload_credential
+                            .into_inner()
+                            .take_temp_credentials(),
+                    ).unwrap();
                 stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
                     move |package| {
                         uploader.multipart_upload_files(
@@ -920,13 +923,13 @@ mod tests {
             )(bf)
                 .and_then(|(scaffold, bf)| {
                 let cred = scaffold.upload_credential.clone();
-                let mut uploader = bf.s3_uploader(
-                    scaffold
-                        .upload_credential
-                        .into_inner()
-                        .take_temp_credentials(),
-                );
-
+                let mut uploader =
+                    bf.s3_uploader(
+                        scaffold
+                            .upload_credential
+                            .into_inner()
+                            .take_temp_credentials(),
+                    ).unwrap();
                 // Check the progress of the upload by polling every 1s:
                 if let Ok(mut indicator) = uploader.progress() {
                     thread::spawn(move || {
@@ -961,20 +964,20 @@ mod tests {
                     .map(move |result| {
                         match result {
                             MultipartUploadResult::Complete(import_id, _) => {
-                                into_future_trait(bf.complete_upload(
-                                    import_id,
-                                    dataset_id.clone(),
-                                    None,
-                                    false,
-                                ).then(|r| {
-                                    // wrap the results as an UploadStatus so we can return
-                                    // errors as strictly value, rather something that will
-                                    // affect the control flow of the future itself:
-                                    match r {
-                                        Ok(manifest) => Ok(UploadStatus::Completed(manifest)),
-                                        Err(err) => Ok(UploadStatus::Aborted(err)),
-                                    }
-                                }))
+                                into_future_trait(
+                                    bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                                        .then(|r| {
+                                            // wrap the results as an UploadStatus so we can return
+                                            // errors as strictly value, rather something that will
+                                            // affect the control flow of the future itself:
+                                            match r {
+                                                Ok(manifest) => {
+                                                    Ok(UploadStatus::Completed(manifest))
+                                                }
+                                                Err(err) => Ok(UploadStatus::Aborted(err)),
+                                            }
+                                        }),
+                                )
                             }
                             MultipartUploadResult::Abort(originating_err, _) => into_future_trait(
                                 future::ok(UploadStatus::Aborted(originating_err)),

@@ -46,9 +46,9 @@ impl IntoIterator for UploadPreview {
 
 /// A manifest of files uploaded to the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Manifest(Vec<model::ManifestEntry>);
+pub struct Manifests(Vec<model::ManifestEntry>);
 
-impl Manifest {
+impl Manifests {
     /// Unwraps the value.
     pub fn into_inner(self) -> Vec<model::ManifestEntry> {
         self.0
@@ -63,7 +63,7 @@ impl Manifest {
     }
 }
 
-impl IntoIterator for Manifest {
+impl IntoIterator for Manifests {
     type Item = model::ManifestEntry;
     type IntoIter = vec::IntoIter<model::ManifestEntry>;
 

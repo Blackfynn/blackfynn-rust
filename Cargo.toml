@@ -1,6 +1,6 @@
 [package]
 name = "blackfynn"
-version = "0.1.18"
+version = "0.1.19"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
 
@@ -9,11 +9,11 @@ chrono = { version = "^0.4", features = ["serde"] }
 error-chain = "^0.12"
 futures = "^0.1"
 hyper = "^0.12"
-hyper-tls = "^0.2"
-lazy_static = "^1.0"
-rusoto_core = "^0.32"
-rusoto_credential = "^0.11"
-rusoto_s3 = "^0.32"
+hyper-tls = "^0.3"
+lazy_static = "^1.1"
+rusoto_core = "^0.33"
+rusoto_credential = "^0.12"
+rusoto_s3 = "^0.33"
 serde = "^1.0"
 serde_derive = "^1.0"
 serde_json = "^1.0"
