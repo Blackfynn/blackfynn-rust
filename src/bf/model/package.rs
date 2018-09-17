@@ -1,13 +1,12 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use serde::{de, Deserialize, Deserializer};
-
-use chrono::{DateTime, Utc};
-
 use bf::model;
+use chrono::{DateTime, Utc};
+use serde::{de, Deserialize, Deserializer};
+use std::fmt;
 
 /// An identifier for a package on the Blackfynn platform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PackageId(String);
 
 impl PackageId {
@@ -40,14 +39,32 @@ impl From<PackageId> for String {
     }
 }
 
+impl<'a> From<&'a PackageId> for String {
+    fn from(id: &'a PackageId) -> String {
+        id.0.to_string()
+    }
+}
+
 impl From<String> for PackageId {
     fn from(id: String) -> Self {
-        PackageId::new(id)
+        Self::new(id)
+    }
+}
+
+impl<'a> From<&'a str> for PackageId {
+    fn from(id: &'a str) -> Self {
+        Self::new(String::from(id))
+    }
+}
+
+impl fmt::Display for PackageId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 /// A package's processing state.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PackageState {
     Deleting,
@@ -64,7 +81,7 @@ pub enum PackageState {
 }
 
 /// A package's type.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PackageType {
     Collection,
@@ -79,7 +96,14 @@ pub enum PackageType {
     Text,
     TimeSeries,
     Unknown,
+    Unsupported,
     Video,
+}
+
+impl Default for PackageType {
+    fn default() -> Self {
+        PackageType::Unknown
+    }
 }
 
 impl PackageType {
@@ -89,20 +113,22 @@ impl PackageType {
     {
         let s: Option<String> = Option::deserialize(deserializer)?;
         match s {
-            Some(t) => match t.as_ref() {
-                "Collection" | "collection" | "COLLECTION" => Ok(Some(PackageType::Collection)),
-                "DataSet" | "dataset" | "DATASET" => Ok(Some(PackageType::DataSet)),
-                "CSV" | "csv" => Ok(Some(PackageType::CSV)),
-                "Image" | "image" | "IMAGE" => Ok(Some(PackageType::Image)),
-                "MRI" | "mri" => Ok(Some(PackageType::MRI)),
-                "MsWord" | "MSWord" | "msword" | "MSWORD" => Ok(Some(PackageType::MSWord)),
-                "Pdf" | "pdf" | "PDF" => Ok(Some(PackageType::PDF)),
-                "Slide" | "slide" | "SLIDE" => Ok(Some(PackageType::Slide)),
-                "Tabular" | "tabular" | "TABULAR" => Ok(Some(PackageType::Tabular)),
-                "Text" | "text" | "TEXT" => Ok(Some(PackageType::Text)),
-                "TimeSeries" | "timeseries" | "TIMESERIES" => Ok(Some(PackageType::TimeSeries)),
-                "Unknown" | "unknown" | "UNKNOWN" => Ok(Some(PackageType::Unknown)),
-                "Video" | "video" | "VIDEO" => Ok(Some(PackageType::Video)),
+            Some(t) => match t.to_lowercase().as_ref() {
+                "collection" => Ok(Some(PackageType::Collection)),
+                // TODO: Remove API support for dataset package type
+                "dataset" => Ok(Some(PackageType::DataSet)),
+                "csv" => Ok(Some(PackageType::CSV)),
+                "image" => Ok(Some(PackageType::Image)),
+                "mri" => Ok(Some(PackageType::MRI)),
+                "msword" => Ok(Some(PackageType::MSWord)),
+                "pdf" => Ok(Some(PackageType::PDF)),
+                "slide" => Ok(Some(PackageType::Slide)),
+                "tabular" => Ok(Some(PackageType::Tabular)),
+                "text" => Ok(Some(PackageType::Text)),
+                "timeseries" => Ok(Some(PackageType::TimeSeries)),
+                "unknown" => Ok(Some(PackageType::Unknown)),
+                "unsupported" => Ok(Some(PackageType::Unsupported)),
+                "video" => Ok(Some(PackageType::Video)),
                 _ => Err(de::Error::custom(format!("Invalid package type: {}", t))),
             },
             None => Ok(None),
@@ -111,7 +137,7 @@ impl PackageType {
 }
 
 /// A "package" representation on the Blackfynn platform.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Package {
     id: PackageId,

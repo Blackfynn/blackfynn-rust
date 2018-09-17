@@ -20,3 +20,13 @@ impl AsRef<model::File> for File {
         &self.content
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Files(Vec<File>);
+
+impl Files {
+    pub fn into_inner(self) -> Vec<model::File> {
+        self.0.into_iter().map(|file| file.into_inner()).collect()
+    }
+}

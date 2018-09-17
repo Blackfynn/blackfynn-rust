@@ -1,9 +1,10 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use bf::model;
+use std::fmt;
 
 /// An identifier for an organization on the Blackfynn platform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct OrganizationId(String);
 
 impl OrganizationId {
@@ -37,14 +38,33 @@ impl From<OrganizationId> for String {
     }
 }
 
+impl<'a> From<&'a OrganizationId> for String {
+    #[allow(dead_code)]
+    fn from(id: &'a OrganizationId) -> Self {
+        id.0.to_string()
+    }
+}
+
 impl From<String> for OrganizationId {
     fn from(id: String) -> Self {
-        OrganizationId::new(id)
+        Self::new(id)
+    }
+}
+
+impl<'a> From<&'a str> for OrganizationId {
+    fn from(id: &'a str) -> Self {
+        Self::new(String::from(id))
+    }
+}
+
+impl fmt::Display for OrganizationId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 /// An organization.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Organization {
     id: OrganizationId,

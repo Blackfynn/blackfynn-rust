@@ -1,7 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 /// The representation type of a `model::File`.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileObjectType {
     File,
@@ -10,7 +10,7 @@ pub enum FileObjectType {
 }
 
 /// A file on the Blackfynn platform.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
     name: String,
@@ -19,6 +19,8 @@ pub struct File {
     s3key: String,
     object_type: FileObjectType,
     size: u64,
+    created_at: String,
+    updated_at: String,
 }
 
 impl File {
@@ -43,6 +45,15 @@ impl File {
     }
 
     #[allow(dead_code)]
+    pub fn s3_url(&self) -> String {
+        format!(
+            "http://{bucket}.s3.amazonaws.com/{key}",
+            bucket = self.s3_bucket(),
+            key = self.s3_key()
+        )
+    }
+
+    #[allow(dead_code)]
     pub fn object_type(&self) -> &FileObjectType {
         &self.object_type
     }
@@ -50,5 +61,15 @@ impl File {
     #[allow(dead_code)]
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    #[allow(dead_code)]
+    pub fn created_at(&self) -> &String {
+        &self.created_at
+    }
+
+    #[allow(dead_code)]
+    pub fn updated_at(&self) -> &String {
+        &self.updated_at
     }
 }

@@ -38,6 +38,19 @@ impl Organization {
     }
 }
 
+impl From<model::Organization> for Organization {
+    #[allow(dead_code)]
+    fn from(organization: model::Organization) -> Self {
+        Self {
+            is_admin: false,
+            is_owner: false,
+            owners: vec![],
+            administrators: vec![],
+            organization,
+        }
+    }
+}
+
 /// A listing of organizations a user is a member of.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,8 +59,24 @@ pub struct Organizations {
 }
 
 impl Organizations {
+    pub fn len(&self) -> usize {
+        self.organizations.len()
+    }
+
     pub fn iter(&self) -> slice::Iter<Organization> {
         self.organizations.iter()
+    }
+}
+
+impl From<Vec<model::Organization>> for Organizations {
+    #[allow(dead_code)]
+    fn from(organizations: Vec<model::Organization>) -> Self {
+        Self {
+            organizations: organizations
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        }
     }
 }
 

@@ -15,7 +15,7 @@ use futures::*;
 // See https://github.com/rust-lang/rust/issues/34511 for tracking the status
 // of `impl traits`.
 #[allow(dead_code)]
-pub fn into_future_trait<F, I, E>(f: F) -> Box<Future<Item = I, Error = E> + Send>
+pub fn into_future_trait<F, I, E>(f: F) -> Box<dyn Future<Item = I, Error = E> + Send>
 where
     F: 'static + Send + Future<Item = I, Error = E>,
 {
@@ -23,7 +23,7 @@ where
 }
 
 #[allow(dead_code)]
-pub fn into_stream_trait<S, I, E>(s: S) -> Box<Stream<Item = I, Error = E> + Send>
+pub fn into_stream_trait<S, I, E>(s: S) -> Box<dyn Stream<Item = I, Error = E> + Send>
 where
     S: 'static + Send + Stream<Item = I, Error = E>,
 {

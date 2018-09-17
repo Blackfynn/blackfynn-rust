@@ -4,12 +4,19 @@
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiLogin {
-    pub token_id: String,
-    pub secret: String,
+    token_id: String,
+    secret: String,
 }
 
 impl ApiLogin {
-    pub fn new(token_id: String, secret: String) -> Self {
-        Self { token_id, secret }
+    pub fn new<P, Q>(token_id: P, secret: Q) -> Self
+    where
+        P: Into<String>,
+        Q: Into<String>,
+    {
+        Self {
+            token_id: token_id.into(),
+            secret: secret.into(),
+        }
     }
 }

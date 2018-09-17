@@ -13,7 +13,7 @@ use futures::*;
 
 use rusoto_core::request::HttpClient;
 use rusoto_credential::StaticProvider;
-use rusoto_s3::{self, S3, S3Client};
+use rusoto_s3::{self, S3Client, S3};
 
 use bf;
 use bf::model;
@@ -95,7 +95,6 @@ impl<C> MultipartUploadFile<C>
 where
     C: 'static + ProgressCallback,
 {
-    #[allow(unknown_lints, too_many_arguments)]
     fn new(
         s3_client: &Arc<S3Client>,
         file: S3File,
@@ -273,8 +272,7 @@ where
                     });
 
                     into_future_trait(f)
-                })
-                .buffer_unordered(concurrent_limit);
+                }).buffer_unordered(concurrent_limit);
 
             into_stream_trait(f)
         } else {
@@ -562,22 +560,21 @@ impl S3Uploader {
             .into_iter()
             .partition(|file| file.size() < S3_MIN_PART_SIZE);
 
-        let s =
-            self.multipart_upload_files_cb(
+        let s = self
+            .multipart_upload_files_cb(
                 path.as_ref().to_path_buf(),
                 &large_s3_files,
                 import_id.clone(),
                 credentials.clone(),
                 cb.clone(),
             ).map(move |result| match result {
-                    MultipartUploadResult::Complete(import_id, _) => stream::once(Ok(import_id)),
-                    MultipartUploadResult::Abort(reason, _) => stream::once(Err(reason)),
-                })
-                .flatten()
-                .chain(
-                    self.put_objects_cb(path, &small_s3_files, import_id, credentials, cb)
-                        .into_stream(),
-                );
+                MultipartUploadResult::Complete(import_id, _) => stream::once(Ok(import_id)),
+                MultipartUploadResult::Abort(reason, _) => stream::once(Err(reason)),
+            }).flatten()
+            .chain(
+                self.put_objects_cb(path, &small_s3_files, import_id, credentials, cb)
+                    .into_stream(),
+            );
 
         into_stream_trait(s)
     }
@@ -624,8 +621,7 @@ impl S3Uploader {
                 s3_client
                     .put_object(request)
                     .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:put object"))
-            })
-            .and_then(move |_| {
+            }).and_then(move |_| {
                 let update = ProgressUpdate::new(
                     1,
                     false,
@@ -736,8 +732,7 @@ impl S3Uploader {
                     tx_progress,
                     cb,
                 ))
-            })
-            .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:begin multipart upload"));
+            }).map_err(|e| bf::Error::with_chain(e, "bf:api:s3:begin multipart upload"));
 
         into_future_trait(f)
     }

@@ -9,6 +9,7 @@ pub use self::s3::{
     UploadProgressIter,
 };
 
+use std::env;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -27,7 +28,7 @@ use super::{request, response};
 use bf;
 use bf::config::Config;
 use bf::model::{
-    self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential,
+    self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };
 use bf::util::futures::into_future_trait;
 
@@ -58,6 +59,9 @@ impl Clone for Blackfynn {
 
 // =============================================================================
 
+// Request parameter
+type RequestParam = (String, String);
+
 // A useful alias when dealing with the fact that an endpoint does not expect
 // a POST/PUT body, but a type is still expected:
 type Nothing = serde_json::Value;
@@ -77,54 +81,79 @@ macro_rules! param {
     };
 }
 
+// Based on https://docs.rs/maplit/1.0.1/maplit/
+macro_rules! params {
+    () => (vec![]); // For empty parameter lists
+    ($($key:expr => $value:expr),*) => {
+        {
+            let mut _p: Vec<RequestParam> = vec![];
+            $(
+                _p.push(param!($key, $value));
+            )*
+            _p
+        }
+    }
+}
+
+// Empty payload
+macro_rules! payload {
+    () => {
+        None as Option<&Nothing>
+    };
+    ($target:expr) => {
+        Some($target).as_ref()
+    };
+}
+
 macro_rules! get {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::GET, vec![], None as Option<&Nothing>)
+        $target.request($route, hyper::Method::GET, params!(), payload!())
+    };
+    ($target:expr, $route:expr, $params:expr) => {
+        $target.request($route, hyper::Method::GET, $params, payload!())
     };
 }
 
 macro_rules! post {
     ($target:expr, $route:expr) => {
-        $target.request(
-            $route,
-            hyper::Method::POST,
-            vec![],
-            None as Option<&Nothing>,
-        )
+        $target.request($route, hyper::Method::POST, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request(
-            $route,
-            hyper::Method::POST,
-            $params,
-            None as Option<&Nothing>,
-        )
+        $target.request($route, hyper::Method::POST, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::POST, $params, Some($payload))
+        $target.request($route, hyper::Method::POST, $params, payload!($payload))
     };
 }
 
 macro_rules! put {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::PUT, vec![], None as Option<&Nothing>)
+        $target.request($route, hyper::Method::PUT, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request(
-            $route,
-            hyper::Method::PUT,
-            $params,
-            None as Option<&Nothing>,
-        )
+        $target.request($route, hyper::Method::PUT, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, Some($payload))
+        $target.request($route, hyper::Method::PUT, $params, payload!($payload))
     };
 }
 
-// ============================================================================
+macro_rules! delete {
+    ($target:expr, $route:expr) => {
+        $target.request($route, hyper::Method::DELETE, params!(), payload!())
+    };
+    ($target:expr, $route:expr, $params:expr) => {
+        $target.request($route, hyper::Method::DELETE, $params, payload!())
+    };
+    ($target:expr, $route:expr, $params:expr, $payload:expr) => {
+        $target.request($route, hyper::Method::DELETE, $params, payload!($payload))
+    };
+}
+
+// ============================================================================s
 
 impl Blackfynn {
+    /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
         let connector = HttpsConnector::new(4).expect("bf:couldn't create https connector");
         let http_client = Client::builder().build(connector);
@@ -138,13 +167,13 @@ impl Blackfynn {
         }
     }
 
-    /// Sets the current organization the user is associated with and returns self.
+    /// Set the current organization the user is associated with and returns self.
     pub fn with_current_organization(self, id: OrganizationId) -> Self {
         self.inner.lock().unwrap().current_organization = Some(id);
         self
     }
 
-    /// Sets the current organization the user is associated with and returns self.
+    /// Set the current organization the user is associated with and returns self.
     pub fn with_session_token(self, token: SessionToken) -> Self {
         self.inner.lock().unwrap().session_token = Some(token);
         self
@@ -152,6 +181,11 @@ impl Blackfynn {
 
     fn session_token(&self) -> Option<SessionToken> {
         self.inner.lock().unwrap().session_token.clone()
+    }
+
+    fn chunk_to_string(body: &hyper::Chunk) -> String {
+        let as_bytes: Vec<u8> = body.to_vec();
+        String::from_utf8_lossy(&as_bytes).to_string()
     }
 
     fn request<I, S, P, Q>(
@@ -162,7 +196,7 @@ impl Blackfynn {
         payload: Option<&P>,
     ) -> bf::Future<Q>
     where
-        I: IntoIterator<Item = (String, String)>,
+        I: IntoIterator<Item = RequestParam>,
         P: serde::Serialize,
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
@@ -196,6 +230,13 @@ impl Blackfynn {
         let body = future::result::<_, bf::error::Error>(body.map_err(Into::into))
             .map_err(|e| bf::Error::with_chain(e, "bf:request:body"));
 
+        let url_string_1 = use_url.to_string();
+        let method_string_1 = method.to_string();
+        let url_string_2 = use_url.to_string();
+        let method_string_2 = method.to_string();
+        let url_string_3 = use_url.to_string();
+        let method_string_3 = method.to_string();
+
         let f = uri
             .join(body)
             .and_then(move |(uri, body): (hyper::Uri, hyper::Body)| {
@@ -204,6 +245,7 @@ impl Blackfynn {
                     .uri(uri)
                     .body(body)
                     .unwrap();
+
                 // If a session token exists, use it to set the "X-SESSION-ID"
                 // header to make subsequent requests:
                 if let Some(session_token) = token {
@@ -218,9 +260,16 @@ impl Blackfynn {
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 );
                 // Make the actual request:
-                client
-                    .request(req)
-                    .map_err(|e| bf::Error::with_chain(e, "bf:request:execute"))
+                client.request(req).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:execute",
+                            method = method_string_1,
+                            url = url_string_1
+                        ),
+                    )
+                })
             })
             .and_then(|response: hyper::Response<hyper::Body>| {
                 // Check the status code. And 5XX code will result in the
@@ -230,7 +279,16 @@ impl Blackfynn {
                 response
                     .into_body()
                     .concat2()
-                    .map_err(|e| bf::Error::with_chain(e, "bf:request:response"))
+                    .map_err(move |e| {
+                        bf::Error::with_chain(
+                            e,
+                            format!(
+                                "bf:request<{method}:{url}>:response",
+                                method = method_string_2,
+                                url = url_string_2
+                            ),
+                        )
+                    })
                     .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
                     .and_then(
                         move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
@@ -246,14 +304,27 @@ impl Blackfynn {
                         },
                     )
                     .and_then(|body: hyper::Chunk| {
+                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present 
+                        // and equal to `DEBUG`, dump the request contents to stderr:
+                        if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
+                            if log_level == "DEBUG" {
+                                eprintln!(
+                                    "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method_string_3,
+                                    url = url_string_3,
+                                    payload = Self::chunk_to_string(&body)
+                                );
+                            }
+                        }
                         // Finally, attempt to parse the JSON response into a typeful representation:
                         serde_json::from_slice::<Q>(&body).map_err(move |e| {
-                            let as_bytes: Vec<u8> = body.to_vec();
                             bf::Error::with_chain(
                                 e,
                                 format!(
-                                    "bf:request:serialize - {}",
-                                    String::from_utf8_lossy(&as_bytes).to_string()
+                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method_string_3,
+                                    url = url_string_3,
+                                    payload = Self::chunk_to_string(&body)
                                 ),
                             )
                         })
@@ -291,27 +362,28 @@ impl Blackfynn {
         rt.block_on(runner(self.clone()))
     }
 
-    /// Tests if the user is logged in and has an active session.
+    /// Test if the user is logged into the Blackfynn platform.
     pub fn has_session(&self) -> bool {
         self.session_token().is_some()
     }
 
-    /// Returns the current organization the user is associated with.
+    /// Get the current organization the user is associated with.
     pub fn current_organization(&self) -> Option<OrganizationId> {
         self.inner.lock().unwrap().current_organization.clone()
     }
 
-    /// Sets the current organization the user is associated with.
+    /// Set the current organization the user is associated with.
     pub fn set_current_organization(&self, id: Option<&OrganizationId>) {
         self.inner.lock().unwrap().current_organization = id.cloned()
     }
 
-    /// Sets the session token the user is associated with.
+    /// Set the session token the user is associated with.
     pub fn set_session_token(&self, token: Option<SessionToken>) {
         self.inner.lock().unwrap().session_token = token;
     }
 
-    /// Return a Future that, when resolved, logs in to the Blackfynn API.
+    /// Log in to the Blackfynn API.
+    ///
     /// If successful, the Blackfynn client will store the resulting session
     /// token for subsequent API calls.
     #[allow(dead_code)]
@@ -323,7 +395,7 @@ impl Blackfynn {
         let payload = request::ApiLogin::new(api_key.into(), api_secret.into());
         let this = self.clone();
         into_future_trait(
-            post!(self, "/account/api/session", vec![], &payload).and_then(
+            post!(self, "/account/api/session", params!(), &payload).and_then(
                 move |login_response: response::ApiSession| {
                     this.inner.lock().unwrap().session_token =
                         Some(login_response.session_token().clone());
@@ -333,24 +405,19 @@ impl Blackfynn {
         )
     }
 
-    /// Return a Future, that when, resolved returns the user
-    /// associated with the session_token.
+    /// Get the current user.
     pub fn get_user(&self) -> bf::Future<model::User> {
         get!(self, "/user/")
     }
 
-    /// Return a Future, that when, resolved sets the current user preferred organization
-    /// and returns the updated user.
+    /// Sets the preferred organization of the current user.
     pub fn set_preferred_organization(
         &self,
         organization_id: Option<OrganizationId>,
     ) -> bf::Future<model::User> {
         let this = self.clone();
-        let user = request::User {
-            organization: organization_id.map(Into::into),
-            ..Default::default()
-        };
-        into_future_trait(put!(self, "/user/", vec![], &user).and_then(
+        let user = request::User::with_organization(organization_id);
+        into_future_trait(put!(self, "/user/", params!(), &user).and_then(
             move |user_response: model::User| {
                 this.set_current_organization(user_response.preferred_organization());
                 Ok(user_response)
@@ -358,31 +425,117 @@ impl Blackfynn {
         ))
     }
 
-    /// Return a Future, that when, resolved returns a listing of the
-    /// organizations the user is a member of.
-    pub fn organizations(&self) -> bf::Future<response::Organizations> {
+    /// List the organizations the user is a member of.
+    pub fn get_organizations(&self) -> bf::Future<response::Organizations> {
         get!(self, "/organizations/")
     }
 
-    /// Return a Future, that when, resolved returns the specified organization.
-    pub fn organization_by_id(&self, id: OrganizationId) -> bf::Future<response::Organization> {
+    /// Get a specific organization.
+    pub fn get_organization_by_id(&self, id: OrganizationId) -> bf::Future<response::Organization> {
         get!(self, route!("/organizations/{id}", id))
     }
 
-    /// Return a Future, that when, resolved returns a listing of the
-    /// datasets the user has access to.
-    pub fn datasets(&self) -> bf::Future<Vec<response::Dataset>> {
+    /// Get a listing of the datasets the current user has access to.
+    pub fn get_datasets(&self) -> bf::Future<Vec<response::Dataset>> {
         get!(self, "/datasets/")
     }
 
-    /// Return a Future, that when, resolved returns the specified dataset.
-    pub fn dataset_by_id(&self, id: DatasetId) -> bf::Future<response::Dataset> {
+    /// Create a new dataset.
+    pub fn create_dataset(
+        &self,
+        payload: request::dataset::Create,
+    ) -> bf::Future<response::Dataset> {
+        post!(self, "/datasets/", params!(), payload!(payload))
+    }
+
+    /// Get a specific dataset.
+    pub fn get_dataset_by_id(&self, id: DatasetId) -> bf::Future<response::Dataset> {
         get!(self, route!("/datasets/{id}", id))
     }
 
-    /// Return a Future, that when, resolved returns the specified package.
-    pub fn package_by_id(&self, id: PackageId) -> bf::Future<response::Package> {
+    /// Get the collaborators of the data set.
+    pub fn get_dataset_collaborators(&self, id: DatasetId) -> bf::Future<response::Collaborators> {
+        get!(self, route!("/datasets/{id}/collaborators", id))
+    }
+
+    /// Share this data set with another user.
+    pub fn share_dataset(
+        &self,
+        id: DatasetId,
+        users: Vec<UserId>,
+    ) -> bf::Future<response::CollaboratorChanges> {
+        put!(
+            self,
+            route!("/datasets/{id}/collaborators", id),
+            params!(),
+            payload!(users)
+        )
+    }
+
+    /// Unshare this data set with another user.
+    pub fn unshare_dataset(
+        &self,
+        id: DatasetId,
+        users: Vec<UserId>,
+    ) -> bf::Future<response::CollaboratorChanges> {
+        delete!(
+            self,
+            route!("/datasets/{id}/collaborators", id),
+            params!(),
+            payload!(users)
+        )
+    }
+
+    /// Update an existing dataset.
+    pub fn update_dataset(
+        &self,
+        id: DatasetId,
+        payload: request::dataset::Update,
+    ) -> bf::Future<response::Dataset> {
+        put!(
+            self,
+            route!("/datasets/{id}", id),
+            params!(),
+            payload!(payload)
+        )
+    }
+
+    /// Delete an existing dataset.
+    pub fn delete_dataset(&self, id: DatasetId) -> bf::Future<()> {
+        let f: bf::Future<response::EmptyMap> = delete!(self, route!("/datasets/{id}", id));
+        into_future_trait(f.map(|_| ()))
+    }
+
+    /// Create a new package.
+    pub fn create_package(
+        &self,
+        payload: request::package::Create,
+    ) -> bf::Future<response::Package> {
+        post!(self, "/packages/", params!(), payload!(payload))
+    }
+
+    /// Get a specific package.
+    pub fn get_package_by_id(&self, id: PackageId) -> bf::Future<response::Package> {
         get!(self, route!("/packages/{id}", id))
+    }
+
+    /// Get the source files that are part of a package.
+    pub fn get_package_sources(&self, id: PackageId) -> bf::Future<response::Files> {
+        get!(self, route!("/packages/{id}/sources", id))
+    }
+
+    /// Update an existing package.
+    pub fn update_package(
+        &self,
+        id: PackageId,
+        payload: request::package::Update,
+    ) -> bf::Future<response::Package> {
+        put!(
+            self,
+            route!("/packages/{id}", id),
+            params!(),
+            payload!(payload)
+        )
     }
 
     /// Grant temporary upload access to the specific dataset for the current session.
@@ -393,7 +546,7 @@ impl Blackfynn {
         )
     }
 
-    /// Grant temporary streaming access for the current session.
+    /// Grant temporary streaming access for the current user.
     pub fn grant_streaming(&self) -> bf::Future<response::TemporaryCredential> {
         get!(self, "/security/user/credentials/streaming")
     }
@@ -414,8 +567,7 @@ impl Blackfynn {
             .enumerate()
             .map(|(id, file)| {
                 model::S3File::new(path.as_ref(), file.as_ref(), Some(Into::into(id as u64)))
-            })
-            .collect::<Result<Vec<_>, _>>();
+            }).collect::<Result<Vec<_>, _>>();
 
         let s3_files = match results {
             Ok(good) => good,
@@ -425,12 +577,12 @@ impl Blackfynn {
         post!(
             self,
             "/files/upload/preview",
-            vec![param!("append", if append { "true" } else { "false" })],
+            params!("append" => if append { "true" } else { "false" }),
             &request::UploadPreview::new(&s3_files)
         )
     }
 
-    /// Returns a S3 uploader.
+    /// Get a S3 uploader.
     pub fn s3_uploader(&self, creds: TemporaryCredential) -> bf::Result<S3Uploader> {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(
@@ -454,8 +606,10 @@ impl Blackfynn {
         destination_id: Option<&PackageId>,
         append: bool,
     ) -> bf::Future<response::Manifests> {
-        let mut params = vec![param!("append", if append { "true" } else { "false" })];
-        params.push(param!("datasetId", dataset_id));
+        let mut params = params!(
+            "append" => if append { "true" } else { "false" },
+            "datasetId" => dataset_id
+        );
         if let Some(dest_id) = destination_id {
             params.push(param!("destinationId", dest_id.clone()));
         }
@@ -478,6 +632,7 @@ mod tests {
     use bf::api::client::s3::MultipartUploadResult;
     use bf::config::Environment;
     use bf::util::futures::into_future_trait;
+    use bf::util::rand_suffix;
 
     use error_chain::ChainedError;
 
@@ -489,11 +644,19 @@ mod tests {
     const FIXTURE_ORGANIZATION: &'static str =
         "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
 
-    // "Blackfynn"
+    // Dedicated agent email (dev)
+    #[allow(dead_code)]
+    const FIXTURE_EMAIL: &'static str = "agent-test@blackfynn.com";
+
+    // Dedicated agent user (dev)
+    #[allow(dead_code)]
+    const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
+
+    // "Blackfynn" (dev)
     const FIXTURE_DATASET: &'static str = "N:dataset:5a6779a4-e3d8-473f-91d0-0a99f144dc44";
 
-    // "Blackfynn"
-    const FIXTURE_PACKAGE: &'static str = "N:collection:ff596451-9525-496b-9618-dccce356d4f4";
+    // "Raw device readings" (dev)
+    const FIXTURE_PACKAGE: &'static str = "N:package:5db936dd-ea5a-45f0-80a6-3cbc425784df";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
@@ -501,7 +664,6 @@ mod tests {
         static ref TEST_DATA_DIR: String = test_data_dir("/small");
         static ref BIG_TEST_FILES: Vec<String> = test_data_files("/big");
         static ref BIG_TEST_DATA_DIR: String = test_data_dir("/big");
-        static ref TEST_DATASET: DatasetId = DatasetId::new(FIXTURE_DATASET);
     }
 
     fn bf() -> Blackfynn {
@@ -549,7 +711,7 @@ mod tests {
         let org = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.organizations()),
+                    .and_then(move |_| bf.get_organizations()),
             )
         });
 
@@ -581,8 +743,7 @@ mod tests {
                     .and_then(move |(user, bf)| {
                         let org = user.preferred_organization().clone();
                         bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    })
-                    .and_then(move |bf| bf.get_user()),
+                    }).and_then(move |bf| bf.get_user()),
             )
         });
 
@@ -596,7 +757,7 @@ mod tests {
         let org = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, "another-bad-secret")
-                    .and_then(move |_| bf.organizations()),
+                    .and_then(move |_| bf.get_organizations()),
             )
         });
 
@@ -607,7 +768,7 @@ mod tests {
     fn fetching_organization_by_id_is_successful() {
         let org = bf().run(move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                bf.organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
+                bf.get_organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
             }))
         });
 
@@ -621,7 +782,7 @@ mod tests {
         let ds = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.datasets()),
+                    .and_then(move |_| bf.get_datasets()),
             )
         });
 
@@ -632,7 +793,7 @@ mod tests {
 
     #[test]
     fn fetching_datasets_fails_if_login_fails() {
-        let ds = bf().run(move |bf| into_future_trait(bf.datasets()));
+        let ds = bf().run(move |bf| into_future_trait(bf.get_datasets()));
         assert!(ds.is_err());
     }
 
@@ -641,7 +802,7 @@ mod tests {
         let ds = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
+                    .and_then(move |_| bf.get_dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
             )
         });
 
@@ -655,7 +816,7 @@ mod tests {
         let package = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.package_by_id(PackageId::new(FIXTURE_PACKAGE))),
+                    .and_then(move |_| bf.get_package_by_id(PackageId::new(FIXTURE_PACKAGE))),
             )
         });
         if package.is_err() {
@@ -668,7 +829,7 @@ mod tests {
         let package = bf().run(move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.package_by_id(PackageId::new("invalid_package_id"))),
+                    .and_then(move |_| bf.get_package_by_id(PackageId::new("invalid_package_id"))),
             )
         });
 
@@ -687,12 +848,90 @@ mod tests {
     fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
         let ds = bf().run(move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                bf.dataset_by_id(DatasetId::new(
+                bf.get_dataset_by_id(DatasetId::new(
                     "N:dataset:not-real-6803-4a67-bf20-83076774a5c7",
                 ))
             }))
         });
         assert!(ds.is_err());
+    }
+
+    #[test]
+    fn creating_then_updating_then_delete_dataset_successful() {
+        let result = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(request::dataset::Create::new(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )).map(|ds| (bf, ds))
+                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, id)| {
+                        bf.update_dataset(
+                            id.clone(),
+                            request::dataset::Update::new(
+                                "new-dataset-name",
+                                None as Option<String>,
+                            ),
+                        ).map(|_| (bf, id))
+                    }).and_then(move |(bf, id)| {
+                        let id = id.clone();
+                        bf.get_dataset_by_id(id.clone())
+                            .and_then(|ds| {
+                                assert_eq!(
+                                    ds.into_inner().name().clone(),
+                                    "new-dataset-name".to_string()
+                                );
+                                Ok(id)
+                            }).map(|id| (bf, id))
+                    }).and_then(move |(bf, id)| bf.delete_dataset(id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().display_chain().to_string());
+        }
+    }
+
+    #[test]
+    fn creating_then_updating_then_delete_package_successful() {
+        let result = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(request::dataset::Create::new(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )).map(|ds| (bf, ds))
+                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, ds_id)| {
+                        bf.create_package(request::package::Create::new(
+                            rand_suffix("$agent-test-package"),
+                            Default::default(),
+                            ds_id.clone(),
+                        )).map(|pkg| (bf, ds_id, pkg))
+                    }).and_then(move |(bf, ds_id, pkg)| {
+                        let pkg_id = pkg.into_inner().id().clone();
+                        bf.update_package(
+                            pkg_id.clone(),
+                            request::package::Update::new("new-package-name"),
+                        ).map(|_| (bf, pkg_id, ds_id))
+                    }).and_then(move |(bf, pkg_id, ds_id)| {
+                        bf.get_package_by_id(pkg_id).and_then(|pkg| {
+                            assert_eq!(
+                                pkg.into_inner().name().clone(),
+                                "new-package-name".to_string()
+                            );
+                            Ok((bf, ds_id))
+                        })
+                    }).and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().display_chain().to_string());
+        }
     }
 
     #[test]
@@ -722,6 +961,7 @@ mod tests {
     }
 
     struct UploadScaffold {
+        dataset_id: DatasetId,
         preview: response::UploadPreview,
         upload_credential: response::UploadCredential,
     }
@@ -730,22 +970,28 @@ mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-        dataset_id: DatasetId,
     ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
-            let dataset_id = dataset_id.clone();
             let test_path = test_path.clone();
             let test_files = test_files.clone();
 
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.grant_upload(dataset_id.clone()).map(|cred| (cred, bf)))
-                    .and_then(move |(creds, bf)| {
+                    .and_then(move |_| {
+                        bf.create_dataset(request::dataset::Create::new(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )).map(move |ds| (bf, ds))
+                    }).and_then(move |(bf, ds)| {
+                        let id = ds.as_ref().id().clone();
+                        bf.grant_upload(id.clone())
+                            .map(move |cred| (bf, id.clone(), cred))
+                    }).and_then(move |(bf, dataset_id, creds)| {
                         bf.preview_upload(test_path, &test_files, false)
-                            .map(|preview| (preview, creds, bf))
-                    })
-                    .and_then(|(p, c, bf)| {
+                            .map(|preview| (bf, dataset_id, preview, creds))
+                    }).and_then(|(bf, dataset_id, p, c)| {
                         future::ok(UploadScaffold {
+                            dataset_id,
                             preview: p,
                             upload_credential: c,
                         }).join(Ok(bf))
@@ -757,36 +1003,54 @@ mod tests {
     #[test]
     fn simple_file_uploading() {
         let result = bf().run(move |bf| {
-            let dataset_id = (&*TEST_DATASET).clone();
-            let f = create_upload_scaffold(
-                (*TEST_DATA_DIR).to_string(),
-                (&*TEST_FILES).to_vec(),
-                dataset_id.clone(),
-            )(bf)
-                .and_then(move |(scaffold, bf)| {
-                let upload_credential = scaffold.upload_credential.clone();
-                let uploader =
-                    bf.s3_uploader(
-                        scaffold
-                            .upload_credential
-                            .into_inner()
-                            .take_temp_credentials(),
-                    ).unwrap();
-                stream::futures_unordered(scaffold.preview.into_iter().map(move |package| {
-                    let upload_credential = upload_credential.clone();
-                    // Simple, non-multipart uploading:
-                    uploader.put_objects(
-                        &*TEST_DATA_DIR,
-                        package.files(),
-                        package.import_id().clone(),
-                        upload_credential.into(),
-                    )
-                })).map(move |import_id| {
-                    bf.complete_upload(import_id, dataset_id.clone(), None, false)
-                })
-                    .collect()
-            })
-                .and_then(|fs| stream::futures_unordered(fs).collect());
+            let f =
+                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+                    .and_then(move |(scaffold, bf)| {
+                        let bf_clone = bf.clone();
+                        let upload_credential = scaffold.upload_credential.clone();
+                        let uploader = bf
+                            .s3_uploader(
+                                scaffold
+                                    .upload_credential
+                                    .into_inner()
+                                    .take_temp_credentials(),
+                            ).unwrap();
+                        let dataset_id = scaffold.dataset_id.clone();
+                        let outer_dataset_id = dataset_id.clone();
+                        stream::futures_unordered(scaffold.preview.into_iter().map(
+                            move |package| {
+                                let dataset_id = dataset_id.clone();
+                                let upload_credential = upload_credential.clone();
+                                // Simple, non-multipart uploading:
+                                uploader
+                                    .put_objects(
+                                        &*TEST_DATA_DIR,
+                                        package.files(),
+                                        package.import_id().clone(),
+                                        upload_credential.into(),
+                                    ).map(move |import_id| (dataset_id, import_id))
+                            },
+                        )).map(move |(dataset_id, import_id)| {
+                            bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                        }).collect()
+                        .map(move |fs| (bf_clone, outer_dataset_id, fs))
+                    }).and_then(|(bf, dataset_id, fs)| {
+                        stream::futures_unordered(fs)
+                            .collect()
+                            .map(|manifests| (bf, dataset_id, manifests))
+                    }).and_then(|(bf, dataset_id, manifests)| {
+                        let mut file_count = 0;
+                        for manifest in manifests {
+                            for entry in manifest.entries() {
+                                let n = entry.files().len();
+                                assert!(n > 0);
+                                file_count += n;
+                            }
+                        }
+                        assert_eq!(file_count, TEST_FILES.len());
+                        Ok((bf, dataset_id))
+                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+
             into_future_trait(f)
         });
 
@@ -794,58 +1058,58 @@ mod tests {
             println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
         }
-
-        let manifests = result.unwrap();
-        let mut file_count = 0;
-        assert!(manifests.len() > 0);
-        for manifest in manifests {
-            for entry in manifest.entries() {
-                let n = entry.files().len();
-                assert!(n > 0);
-                file_count += n;
-            }
-        }
-        assert_eq!(file_count, TEST_FILES.len());
     }
 
     #[test]
     fn multipart_file_uploading() {
         let result = bf().run(move |bf| {
-            let dataset_id = (&*TEST_DATASET).clone();
-
-            let f = create_upload_scaffold(
-                (*TEST_DATA_DIR).to_string(),
-                (&*TEST_FILES).to_vec(),
-                dataset_id.clone(),
-            )(bf)
-                .and_then(move |(scaffold, bf)| {
-                let cred = scaffold.upload_credential.clone();
-                let uploader =
-                    bf.s3_uploader(
-                        scaffold
-                            .upload_credential
-                            .into_inner()
-                            .take_temp_credentials(),
-                    ).unwrap();
-                stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
-                    move |package| {
-                        uploader.multipart_upload_files(
-                            &*TEST_DATA_DIR,
-                            package.files(),
-                            package.import_id().clone(),
-                            cred.clone().into(),
-                        )
-                    },
-                )).flatten()
-                    .filter_map(move |result| match result {
-                        MultipartUploadResult::Complete(import_id, _) => {
-                            Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
+            let bf_clone = bf.clone();
+            let f =
+                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+                    .and_then(move |(scaffold, bf)| {
+                        let dataset_id = scaffold.dataset_id.clone();
+                        let dataset_id_inner = scaffold.dataset_id.clone();
+                        let cred = scaffold.upload_credential.clone();
+                        let uploader = bf
+                            .s3_uploader(
+                                scaffold
+                                    .upload_credential
+                                    .into_inner()
+                                    .take_temp_credentials(),
+                            ).unwrap();
+                        stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
+                            move |package| {
+                                uploader.multipart_upload_files(
+                                    &*TEST_DATA_DIR,
+                                    package.files(),
+                                    package.import_id().clone(),
+                                    cred.clone().into(),
+                                )
+                            },
+                        )).flatten()
+                        .filter_map(move |result| match result {
+                            MultipartUploadResult::Complete(import_id, _) => {
+                                Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
+                            }
+                            _ => None,
+                        }).collect()
+                        .map(|fs| (fs, dataset_id_inner))
+                    }).and_then(|(fs, dataset_id)| {
+                        stream::futures_unordered(fs)
+                            .collect()
+                            .map(|manifests| (dataset_id, manifests))
+                    }).and_then(|(dataset_id, manifests)| {
+                        let mut file_count = 0;
+                        for manifest in manifests {
+                            for entry in manifest.entries() {
+                                let n = entry.files().len();
+                                assert!(n > 0);
+                                file_count += n;
+                            }
                         }
-                        _ => None,
-                    })
-                    .collect()
-            })
-                .and_then(|fs| stream::futures_unordered(fs).collect());
+                        assert_eq!(file_count, TEST_FILES.len());
+                        Ok(dataset_id)
+                    }).and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
@@ -854,18 +1118,6 @@ mod tests {
             println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
         }
-
-        let manifests = result.unwrap();
-        let mut file_count = 0;
-        assert!(manifests.len() > 0);
-        for manifest in manifests {
-            for entry in manifest.entries() {
-                let n = entry.files().len();
-                assert!(n > 0);
-                file_count += n;
-            }
-        }
-        assert_eq!(file_count, TEST_FILES.len());
     }
 
     #[derive(Debug)]
@@ -913,18 +1165,18 @@ mod tests {
         let cb = ProgressIndicator::new();
 
         let result = bf().run(move |bf| {
-            let dataset_id = (&*TEST_DATASET).clone();
             let cb = cb.clone();
 
             let f = create_upload_scaffold(
                 (*BIG_TEST_DATA_DIR).to_string(),
                 (&*BIG_TEST_FILES).to_vec(),
-                dataset_id.clone(),
-            )(bf)
-                .and_then(|(scaffold, bf)| {
+            )(bf).and_then(|(scaffold, bf)| {
+                let bf_clone = bf.clone();
                 let cred = scaffold.upload_credential.clone();
-                let mut uploader =
-                    bf.s3_uploader(
+                let dataset_id = scaffold.dataset_id.clone();
+                let dataset_id_outer = dataset_id.clone();
+                let mut uploader = bf
+                    .s3_uploader(
                         scaffold
                             .upload_credential
                             .into_inner()
@@ -961,50 +1213,51 @@ mod tests {
                         )
                     },
                 )).flatten()
-                    .map(move |result| {
-                        match result {
-                            MultipartUploadResult::Complete(import_id, _) => {
-                                into_future_trait(
-                                    bf.complete_upload(import_id, dataset_id.clone(), None, false)
-                                        .then(|r| {
-                                            // wrap the results as an UploadStatus so we can return
-                                            // errors as strictly value, rather something that will
-                                            // affect the control flow of the future itself:
-                                            match r {
-                                                Ok(manifest) => {
-                                                    Ok(UploadStatus::Completed(manifest))
-                                                }
-                                                Err(err) => Ok(UploadStatus::Aborted(err)),
-                                            }
-                                        }),
-                                )
-                            }
-                            MultipartUploadResult::Abort(originating_err, _) => into_future_trait(
-                                future::ok(UploadStatus::Aborted(originating_err)),
-                            ),
+                .map(move |result| {
+                    match result {
+                        MultipartUploadResult::Complete(import_id, _) => {
+                            into_future_trait(
+                                bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                                    .then(|r| {
+                                        // wrap the results as an UploadStatus so we can return
+                                        // errors as strictly value, rather something that will
+                                        // affect the control flow of the future itself:
+                                        match r {
+                                            Ok(manifest) => Ok(UploadStatus::Completed(manifest)),
+                                            Err(err) => Ok(UploadStatus::Aborted(err)),
+                                        }
+                                    }),
+                            )
                         }
-                    })
+                        MultipartUploadResult::Abort(originating_err, _) => {
+                            into_future_trait(future::ok(UploadStatus::Aborted(originating_err)))
+                        }
+                    }
+                }).collect()
+                .map(|fs| (bf_clone, fs, dataset_id_outer))
+            }).and_then(|(bf, fs, dataset_id)| {
+                stream::futures_unordered(fs)
                     .collect()
-            })
-                .and_then(|fs| stream::futures_unordered(fs).collect());
+                    .map(|manifests| (bf, dataset_id, manifests))
+            }).and_then(|(bf, dataset_id, manifests)| {
+                for entry in manifests {
+                    match entry {
+                        UploadStatus::Completed(_) => assert!(true),
+                        UploadStatus::Aborted(e) => {
+                            println!("ABORTED => {:#?}", e);
+                            assert!(false)
+                        }
+                    }
+                }
+                Ok((bf, dataset_id))
+            }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
+
             into_future_trait(f)
         });
 
         if result.is_err() {
             println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
-        }
-
-        if let Ok(manifests) = result {
-            for entry in manifests {
-                match entry {
-                    UploadStatus::Completed(_) => assert!(true),
-                    UploadStatus::Aborted(e) => {
-                        println!("ABORTED => {:#?}", e);
-                        assert!(false)
-                    }
-                }
-            }
         }
     }
 }

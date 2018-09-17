@@ -9,8 +9,10 @@ extern crate error_chain;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
+extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
+extern crate rand;
 extern crate rusoto_core;
 extern crate rusoto_credential;
 extern crate rusoto_s3;

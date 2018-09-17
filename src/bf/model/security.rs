@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use bf::model;
 
 /// Temporary credentials to perform an action, like uploading a file or stream data.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemporaryCredential {
     access_key: model::AccessKey,
@@ -48,7 +48,7 @@ impl TemporaryCredential {
 }
 
 /// Credentials to upload a file.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadCredential {
     temp_credentials: TemporaryCredential,
