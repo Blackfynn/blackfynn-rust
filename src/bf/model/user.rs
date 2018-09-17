@@ -3,7 +3,7 @@
 use bf::model;
 
 /// An identifier for a user on the Blackfynn platform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct UserId(String);
 
 impl UserId {
@@ -37,14 +37,27 @@ impl From<UserId> for String {
     }
 }
 
+impl<'a> From<&'a UserId> for String {
+    #[allow(dead_code)]
+    fn from(id: &'a UserId) -> Self {
+        id.0.to_string()
+    }
+}
+
 impl From<String> for UserId {
     fn from(id: String) -> Self {
-        UserId::new(id)
+        Self::new(id)
+    }
+}
+
+impl<'a> From<&'a str> for UserId {
+    fn from(id: &'a str) -> Self {
+        Self::new(String::from(id))
     }
 }
 
 /// A user.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
     id: UserId,

@@ -3,10 +3,10 @@
 use bf::model::S3File;
 
 /// A preview of files to be uploaded to the Blackfynn platform.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadPreview {
-    pub files: Vec<S3File>,
+    files: Vec<S3File>,
 }
 
 impl UploadPreview {

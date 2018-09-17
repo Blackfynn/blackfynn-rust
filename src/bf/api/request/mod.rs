@@ -3,6 +3,8 @@
 //! Client request types to the Blackfynn API.
 
 mod account;
+pub mod dataset;
+pub mod package;
 mod upload;
 mod user;
 

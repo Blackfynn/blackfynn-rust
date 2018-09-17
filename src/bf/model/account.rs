@@ -1,7 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 /// A Blackfynn platform session token.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct SessionToken(String);
 
 impl SessionToken {
@@ -36,5 +36,11 @@ impl From<String> for SessionToken {
 impl From<SessionToken> for String {
     fn from(token: SessionToken) -> Self {
         token.0
+    }
+}
+
+impl<'a> From<&'a SessionToken> for String {
+    fn from(token: &'a SessionToken) -> Self {
+        token.0.to_string()
     }
 }

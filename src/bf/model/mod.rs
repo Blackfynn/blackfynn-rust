@@ -9,7 +9,9 @@ mod dataset;
 mod file;
 mod organization;
 mod package;
+mod property;
 mod security;
+mod team;
 mod upload;
 mod user;
 
@@ -24,6 +26,8 @@ pub use self::dataset::{Dataset, DatasetId};
 pub use self::file::File;
 pub use self::organization::{Organization, OrganizationId};
 pub use self::package::{Package, PackageId, PackageState, PackageType};
+pub use self::property::Property;
 pub use self::security::{TemporaryCredential, UploadCredential};
+pub use self::team::Team;
 pub use self::upload::{ImportId, ManifestEntry, PackagePreview, S3File};
 pub use self::user::{User, UserId};

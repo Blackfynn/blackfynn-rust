@@ -2,9 +2,10 @@
 
 use bf::model;
 use chrono::{DateTime, Utc};
+use std::fmt;
 
 /// An identifier for a Blackfynn dataset.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct DatasetId(String);
 
 impl DatasetId {
@@ -37,14 +38,32 @@ impl From<DatasetId> for String {
     }
 }
 
+impl<'a> From<&'a DatasetId> for String {
+    fn from(id: &'a DatasetId) -> Self {
+        id.0.to_string()
+    }
+}
+
 impl From<String> for DatasetId {
     fn from(id: String) -> Self {
-        DatasetId::new(id)
+        Self::new(id)
+    }
+}
+
+impl<'a> From<&'a str> for DatasetId {
+    fn from(id: &'a str) -> Self {
+        Self::new(String::from(id))
+    }
+}
+
+impl fmt::Display for DatasetId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 /// A Blackfynn dataset.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {
     id: DatasetId,

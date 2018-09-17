@@ -3,7 +3,7 @@
 use bf::model;
 
 /// An AWS S3 access key.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct AccessKey(String);
 
 impl AccessKey {
@@ -35,6 +35,12 @@ impl From<AccessKey> for String {
     }
 }
 
+impl<'a> From<&'a AccessKey> for String {
+    fn from(key: &'a AccessKey) -> Self {
+        key.0.to_string()
+    }
+}
+
 impl From<String> for AccessKey {
     fn from(key: String) -> Self {
         AccessKey::new(key)
@@ -42,7 +48,7 @@ impl From<String> for AccessKey {
 }
 
 /// An AWS S3 secret key.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct SecretKey(String);
 
 impl SecretKey {
@@ -74,6 +80,12 @@ impl From<SecretKey> for String {
     }
 }
 
+impl<'a> From<&'a SecretKey> for String {
+    fn from(key: &'a SecretKey) -> Self {
+        key.0.to_string()
+    }
+}
+
 impl From<String> for SecretKey {
     fn from(key: String) -> Self {
         SecretKey::new(key)
@@ -81,7 +93,7 @@ impl From<String> for SecretKey {
 }
 
 /// An AWS S3 bucket.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct S3Bucket(String);
 
 impl S3Bucket {
@@ -113,6 +125,12 @@ impl From<S3Bucket> for String {
     }
 }
 
+impl<'a> From<&'a S3Bucket> for String {
+    fn from(s3_bucket: &'a S3Bucket) -> Self {
+        s3_bucket.0.to_string()
+    }
+}
+
 impl From<String> for S3Bucket {
     fn from(s3_bucket: String) -> Self {
         S3Bucket::new(s3_bucket)
@@ -120,7 +138,7 @@ impl From<String> for S3Bucket {
 }
 
 /// An AWS S3 object key.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct S3Key(String);
 
 impl S3Key {
@@ -159,6 +177,12 @@ impl From<S3Key> for String {
     }
 }
 
+impl<'a> From<&'a S3Key> for String {
+    fn from(s3_key: &'a S3Key) -> Self {
+        s3_key.0.to_string()
+    }
+}
+
 impl From<String> for S3Key {
     fn from(s3_key: String) -> Self {
         S3Key::new(s3_key)
@@ -166,7 +190,7 @@ impl From<String> for S3Key {
 }
 
 /// An appendable, AWS S3 object key used for uploading to the Blackfynn platform.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct S3UploadKey {
     email: String,
     import_id: model::ImportId,
@@ -205,7 +229,7 @@ impl From<S3UploadKey> for S3Key {
 }
 
 /// An AWS server-side encryption type.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum S3ServerSideEncryption {
     KMS,
     AES256,
@@ -233,7 +257,7 @@ impl Default for S3ServerSideEncryption {
 }
 
 /// An AWS encryption key.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct S3EncryptionKeyId(String);
 
 impl S3EncryptionKeyId {
@@ -266,6 +290,12 @@ impl From<S3EncryptionKeyId> for String {
     }
 }
 
+impl<'a> From<&'a S3EncryptionKeyId> for String {
+    fn from(encryption_key_id: &'a S3EncryptionKeyId) -> Self {
+        encryption_key_id.0.to_string()
+    }
+}
+
 impl From<String> for S3EncryptionKeyId {
     fn from(encryption_key_id: String) -> Self {
         S3EncryptionKeyId::new(encryption_key_id)
@@ -273,7 +303,7 @@ impl From<String> for S3EncryptionKeyId {
 }
 
 /// An AWS multipart upload identifier.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct S3UploadId(String);
 
 impl S3UploadId {
@@ -309,5 +339,11 @@ impl From<String> for S3UploadId {
 impl From<S3UploadId> for String {
     fn from(upload_id: S3UploadId) -> Self {
         upload_id.0
+    }
+}
+
+impl<'a> From<&'a S3UploadId> for String {
+    fn from(upload_id: &'a S3UploadId) -> Self {
+        upload_id.0.to_string()
     }
 }
