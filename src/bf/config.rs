@@ -9,7 +9,7 @@ use url::Url;
 use bf::model::S3ServerSideEncryption;
 
 /// Defines the server environment the library is interacting with.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
 pub enum Environment {
     #[allow(dead_code)]
     Local,
