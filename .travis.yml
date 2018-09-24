@@ -13,6 +13,6 @@ before_script:
   - rustup component add rustfmt-preview
 script:
   - cargo update
-  - cargo fmt --all -- --write-mode=diff
+  - cargo fmt
   - cargo build
   - cargo test
