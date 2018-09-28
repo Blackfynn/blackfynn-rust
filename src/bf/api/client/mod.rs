@@ -26,7 +26,7 @@ use tokio;
 
 use super::{request, response};
 use bf;
-use bf::config::Config;
+use bf::config::{ Config, Environment };
 use bf::model::{
     self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };
@@ -177,6 +177,11 @@ impl Blackfynn {
     pub fn with_session_token(self, token: SessionToken) -> Self {
         self.inner.lock().unwrap().session_token = Some(token);
         self
+    }
+
+    /// Change the active environment
+    pub fn change_environment(&self, env: Environment) {
+        self.inner.lock().unwrap().config = Config::new(env);
     }
 
     fn session_token(&self) -> Option<SessionToken> {
