@@ -167,23 +167,6 @@ impl Blackfynn {
         }
     }
 
-    /// Set the current organization the user is associated with and returns self.
-    pub fn with_current_organization(self, id: OrganizationId) -> Self {
-        self.inner.lock().unwrap().current_organization = Some(id);
-        self
-    }
-
-    /// Set the current organization the user is associated with and returns self.
-    pub fn with_session_token(self, token: SessionToken) -> Self {
-        self.inner.lock().unwrap().session_token = Some(token);
-        self
-    }
-
-    /// Change the active environment
-    pub fn change_environment(&self, env: Environment) {
-        self.inner.lock().unwrap().config = Config::new(env);
-    }
-
     fn session_token(&self) -> Option<SessionToken> {
         self.inner.lock().unwrap().session_token.clone()
     }
@@ -309,7 +292,7 @@ impl Blackfynn {
                         },
                     )
                     .and_then(|body: hyper::Chunk| {
-                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present 
+                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
                         // and equal to `DEBUG`, dump the request contents to stderr:
                         if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
                             if log_level == "DEBUG" {
@@ -385,6 +368,11 @@ impl Blackfynn {
     /// Set the session token the user is associated with.
     pub fn set_session_token(&self, token: Option<SessionToken>) {
         self.inner.lock().unwrap().session_token = token;
+    }
+
+    /// Set the active environment
+    pub fn set_environment(&self, env: Environment) {
+        self.inner.lock().unwrap().config = Config::new(env);
     }
 
     /// Log in to the Blackfynn API.
