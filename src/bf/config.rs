@@ -3,10 +3,13 @@
 //! Library configuration options and environment definitions.
 
 use std::env;
+use std::fmt;
+use std::str::FromStr;
 
 use url::Url;
 
 use bf::model::S3ServerSideEncryption;
+use bf::error::{Error, ErrorKind};
 
 /// Defines the server environment the library is interacting with.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -32,6 +35,31 @@ impl Environment {
             }
             Development => "https://dev.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
             Production => "https://api.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
+        }
+    }
+}
+
+impl fmt::Display for Environment {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let printable = match *self {
+            Environment::Local => "local",
+            Environment::Development => "development",
+            Environment::Production => "production",
+        };
+
+        write!(f, "{}", printable)
+    }
+}
+
+impl FromStr for Environment {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_ref() {
+            "dev" | "development" => Ok(Environment::Development),
+            "prod" | "production" => Ok(Environment::Production),
+            "local" => Ok(Environment::Local),
+            _ => Err(ErrorKind::EnvParseError(s.to_string()).into())
         }
     }
 }

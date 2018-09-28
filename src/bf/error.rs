@@ -47,5 +47,9 @@ error_chain! {
             description("S3: missing upload ID")
             display("S3: missing upload ID")
         }
+        EnvParseError(s: String) {
+            description("Invalid environment string")
+            display("Invalid environment string :: {}", s)
+        }
     }
 }
