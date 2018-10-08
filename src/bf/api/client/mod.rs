@@ -26,7 +26,7 @@ use tokio;
 
 use super::{request, response};
 use bf;
-use bf::config::{ Config, Environment };
+use bf::config::{Config, Environment};
 use bf::model::{
     self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };

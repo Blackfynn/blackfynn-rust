@@ -93,7 +93,7 @@ struct MultipartUploadFile<C: ProgressCallback> {
 
 impl<C> MultipartUploadFile<C>
 where
-    C: 'static + ProgressCallback,
+    C: 'static + ProgressCallback + Clone,
 {
     fn new(
         s3_client: &Arc<S3Client>,
@@ -335,7 +335,7 @@ where
 /// A trait defining a progress indicator callback. Every time a file part
 /// successfully completes, `update` will be called with new, update statistics
 /// for the file.
-pub trait ProgressCallback: Clone + Send {
+pub trait ProgressCallback: Send + Sync {
     /// Called when an uploaded progress update occurs.
     fn on_update(&self, &ProgressUpdate);
 }
@@ -347,6 +347,21 @@ struct NoProgress;
 impl ProgressCallback for NoProgress {
     fn on_update(&self, _update: &ProgressUpdate) {
         // Do nothing
+    }
+}
+
+impl ProgressCallback for Box<dyn ProgressCallback> {
+    fn on_update(&self, _update: &ProgressUpdate) {
+        self.as_ref().on_update(_update)
+    }
+}
+
+impl ProgressCallback for Arc<Box<dyn ProgressCallback>> {
+    fn on_update(&self, _update: &ProgressUpdate) {
+        let this = self.clone();
+        if let Ok(cb) = Arc::try_unwrap(this) {
+            cb.on_update(_update)
+        }
     }
 }
 
@@ -552,7 +567,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Stream<ImportId>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
         P: 'static + AsRef<Path>,
     {
         // Divide the files into large and small groups. Large groups will be multipart uploaded.
@@ -590,7 +605,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Future<ImportId>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
         P: 'static + AsRef<Path>,
     {
         let s3_client = Arc::clone(&self.s3_client);
@@ -649,7 +664,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Future<ImportId>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
         P: 'static + AsRef<Path>,
     {
         let ret_import_id = import_id.clone();
@@ -693,7 +708,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Future<MultipartUploadFile<C>>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
     {
         // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         // TODO: implement retry logic here
@@ -747,7 +762,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Future<MultipartUploadResult>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
         P: 'static + Send + AsRef<Path>,
     {
         let f = self
@@ -793,7 +808,7 @@ impl S3Uploader {
         cb: C,
     ) -> bf::Stream<MultipartUploadResult>
     where
-        C: 'static + ProgressCallback,
+        C: 'static + ProgressCallback + Clone,
         P: 'static + AsRef<Path>,
     {
         let fs = files
