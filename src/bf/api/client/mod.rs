@@ -531,12 +531,39 @@ impl Blackfynn {
         )
     }
 
+    /// Get the members that belong to the current users organization.
+    pub fn get_members(&self) -> bf::Future<Vec<model::User>> {
+        into_future_trait(match self.current_organization() {
+            Some(org) => self.get_members_by_organization(org),
+            None => into_future_trait(future::err::<_, bf::Error>(
+                bf::error::ErrorKind::NoOrganizationSetError.into(),
+            )),
+        })
+    }
+
+    /// Get the members that belong to the specified organization.
+    pub fn get_members_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<model::User>> {
+        get!(self, route!("/organizations/{id}/members", id))
+    }
+
+    /// Get the members that belong to the current users organization.
+    pub fn get_teams(&self) -> bf::Future<Vec<response::Team>> {
+        into_future_trait(match self.current_organization() {
+            Some(org) => self.get_teams_by_organization(org),
+            None => into_future_trait(future::err::<_, bf::Error>(
+                bf::error::ErrorKind::NoOrganizationSetError.into(),
+            )),
+        })
+    }
+
+    /// Get the teams that belong to the specified organization.
+    pub fn get_teams_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<response::Team>> {
+        get!(self, route!("/organizations/{id}/teams", id))
+    }
+
     /// Grant temporary upload access to the specific dataset for the current session.
-    pub fn grant_upload(&self, dataset_id: DatasetId) -> bf::Future<response::UploadCredential> {
-        get!(
-            self,
-            route!("/security/user/credentials/upload/{dataset_id}", dataset_id)
-        )
+    pub fn grant_upload(&self, id: DatasetId) -> bf::Future<response::UploadCredential> {
+        get!(self, route!("/security/user/credentials/upload/{id}", id))
     }
 
     /// Grant temporary streaming access for the current user.
@@ -847,6 +874,36 @@ mod tests {
             }))
         });
         assert!(ds.is_err());
+    }
+
+    #[test]
+    fn fetch_members() {
+        let members = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_user().map(|user| (user, bf)))
+                    .and_then(move |(user, bf)| {
+                        let org = user.preferred_organization().clone();
+                        bf.set_preferred_organization(org.cloned()).map(|_| bf)
+                    }).and_then(move |bf| bf.get_members()),
+            )
+        });
+        assert!(members.is_ok());
+    }
+
+    #[test]
+    fn fetch_teams() {
+        let teams = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_user().map(|user| (user, bf)))
+                    .and_then(move |(user, bf)| {
+                        let org = user.preferred_organization().clone();
+                        bf.set_preferred_organization(org.cloned()).map(|_| bf)
+                    }).and_then(move |bf| bf.get_teams()),
+            )
+        });
+        assert!(teams.is_ok());
     }
 
     #[test]

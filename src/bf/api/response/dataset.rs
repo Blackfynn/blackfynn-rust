@@ -2,7 +2,6 @@
 
 use bf::api::response::package::Package;
 use bf::model;
-use itertools::join;
 use std::collections::HashMap;
 
 /// A response wrapping a `model::Dataset`, along with and related metadata.
@@ -161,39 +160,22 @@ impl CollaboratorChanges {
     /// Get a summary of the changes that occurred.
     #[allow(dead_code)]
     pub fn summary(&self) -> String {
-        fn pluralize<'a>(s: &'a str, count: u32) -> String {
-            let mut t = String::from(s);
-            if count == 0 || count > 1 {
-                t.push_str("s");
+        let mut text = String::new();
+        let n = self.changes.len();
+        for (i, (ref entity_id, ref change_response)) in self.changes.iter().enumerate() {
+            let line = format!("{entity_id}: ", entity_id = entity_id);
+            text.push_str(&line);
+            if change_response.success() {
+                text.push_str("OK");
+            } else {
+                let error = "[Something went wrong]".to_string();
+                let blurb = change_response.message().unwrap_or(&error);
+                text.push_str(blurb.as_str());
             }
-            t
+            if (i + 1) < n {
+                text.push_str("\n");
+            }
         }
-
-        fn make_entry<'a>(thing: &'a str, count: u32) -> String {
-            format!(
-                "{count} {thing}",
-                count = count,
-                thing = pluralize(thing, count)
-            )
-        }
-
-        let counts = self.counts();
-        let users_count = counts.users();
-        let orgs_count = counts.organizations();
-        let teams_count = counts.teams();
-
-        if users_count > 0 || orgs_count > 0 || teams_count > 0 {
-            join(
-                vec![
-                    make_entry("user", users_count),
-                    make_entry("organization", orgs_count),
-                    make_entry("team", teams_count),
-                    "changed.".to_string(),
-                ],
-                ", ",
-            )
-        } else {
-            "No changes".to_owned()
-        }
+        text
     }
 }

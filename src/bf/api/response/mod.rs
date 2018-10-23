@@ -9,6 +9,7 @@ mod file;
 mod organization;
 mod package;
 mod security;
+mod team;
 mod upload;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -25,4 +26,5 @@ pub use self::file::{File, Files};
 pub use self::organization::{Organization, Organizations};
 pub use self::package::Package;
 pub use self::security::{TemporaryCredential, UploadCredential};
+pub use self::team::Team;
 pub use self::upload::{Manifests, UploadPreview};

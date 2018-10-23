@@ -39,17 +39,21 @@ error_chain! {
             description("API error")
             display("API error :: {} {}", status_code, message)
         }
-        InvalidUnicodePath(p: path::PathBuf) {
-            description("Invalid unicode characters in path")
-            display("Invalid unicode characters in path :: {:?}", p)
+        EnvParseError(s: String) {
+            description("API: Invalid environment string")
+            display("API: Invalid environment string :: {}", s)
         }
-        S3MissingUploadId {
+        InvalidUnicodePathError(p: path::PathBuf) {
+            description("API: Invalid unicode characters in path")
+            display("API: Invalid unicode characters in path :: {:?}", p)
+        }
+        NoOrganizationSetError {
+            description("API: No organization set")
+            display("API: No organization set")
+        }
+        S3MissingUploadIdError {
             description("S3: missing upload ID")
             display("S3: missing upload ID")
-        }
-        EnvParseError(s: String) {
-            description("Invalid environment string")
-            display("Invalid environment string :: {}", s)
         }
     }
 }

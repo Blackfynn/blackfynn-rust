@@ -277,7 +277,7 @@ where
             into_stream_trait(f)
         } else {
             into_stream_trait(stream::once(Err(
-                bf::error::ErrorKind::S3MissingUploadId.into()
+                bf::error::ErrorKind::S3MissingUploadIdError.into(),
             )))
         }
     }
@@ -298,7 +298,9 @@ where
 
             into_future_trait(f)
         } else {
-            into_future_trait(Err(bf::error::ErrorKind::S3MissingUploadId.into()).into_future())
+            into_future_trait(
+                Err(bf::error::ErrorKind::S3MissingUploadIdError.into()).into_future(),
+            )
         }
     }
 
@@ -327,7 +329,9 @@ where
 
             into_future_trait(f)
         } else {
-            into_future_trait(Err(bf::error::ErrorKind::S3MissingUploadId.into()).into_future())
+            into_future_trait(
+                Err(bf::error::ErrorKind::S3MissingUploadIdError.into()).into_future(),
+            )
         }
     }
 }

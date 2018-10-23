@@ -202,7 +202,7 @@ impl S3File {
         let file_name: bf::Result<String> = file_path
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePath(file_path.clone()).into())
+            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePathError(file_path.clone()).into())
             .map(String::from);
 
         let file_name = file_name?;

@@ -63,6 +63,10 @@ impl Organizations {
         self.organizations.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn iter(&self) -> slice::Iter<Organization> {
         self.organizations.iter()
     }
