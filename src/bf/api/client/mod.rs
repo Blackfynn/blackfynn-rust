@@ -646,10 +646,10 @@ mod tests {
     const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "Blackfynn" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:5a6779a4-e3d8-473f-91d0-0a99f144dc44";
+    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
 
     // "Raw device readings" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:package:5db936dd-ea5a-45f0-80a6-3cbc425784df";
+    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
