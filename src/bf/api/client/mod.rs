@@ -181,7 +181,7 @@ impl Blackfynn {
         route: S,
         method: hyper::Method,
         params: I,
-        payload: Option<&P>,
+        payload: Option<&B>,
     ) -> bf::Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
@@ -599,6 +599,21 @@ impl Blackfynn {
             "/files/upload/preview",
             params!("append" => if append { "true" } else { "false" }),
             &request::UploadPreview::new(&s3_files)
+        )
+    }
+
+
+    pub fn upload(
+        &self,
+        import_id: ImportId,
+        organization_id: OrganizationId,
+        file_name: String,
+
+    ) -> bf::Future<response::UploadFile> {
+        request(
+            self,
+            route!("/upload/organizations/{organization_id}/id/{import_id}?filename={file_name}", organization_id, import_id, file_name),
+            ChunkedBody{}
         )
     }
 

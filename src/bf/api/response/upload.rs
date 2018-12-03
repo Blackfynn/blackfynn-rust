@@ -71,3 +71,14 @@ impl IntoIterator for Manifests {
         self.0.into_iter()
     }
 }
+
+/// A file upload response
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UploadFileResponse {
+    success: Boolean,
+    error: Option<String>
+}
+
+impl UploadFileResponse {
+    pub fn into_inner(self) -> UploadFileResponse
+}
