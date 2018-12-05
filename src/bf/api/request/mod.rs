@@ -7,6 +7,7 @@ pub mod dataset;
 pub mod package;
 mod upload;
 mod user;
+pub mod chunked_http;
 
 // Re-export:
 pub use self::account::ApiLogin;

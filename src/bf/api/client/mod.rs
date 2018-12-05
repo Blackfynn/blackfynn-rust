@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use futures::*;
 
 use hyper;
-use hyper::client::{Client, HttpConnector};
+use hyper::client::{Client, Builder, HttpConnector};
 use hyper_tls::HttpsConnector;
 
 use serde;
@@ -25,6 +25,7 @@ use serde_json;
 use tokio;
 
 use super::{request, response};
+use super::request::chunked_http::ChunkedFilePayload;
 use bf;
 use bf::config::{Config, Environment};
 use bf::model::{
@@ -38,6 +39,7 @@ const X_SESSION_ID: &str = "X-SESSION-ID";
 struct BlackFynnImpl {
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
+    chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload>,
     session_token: Option<SessionToken>,
     current_organization: Option<OrganizationId>,
 }
@@ -71,7 +73,7 @@ type Nothing = serde_json::Value;
 // Useful builder macros:
 macro_rules! route {
     ($uri:expr, $($var:ident),*) => (
-        format!($uri, $($var = Into::<String>::into($var))*)
+        format!($uri, $($var = Into::<String>::into($var)),*)
     )
 }
 
@@ -156,11 +158,13 @@ impl Blackfynn {
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
         let connector = HttpsConnector::new(4).expect("bf:couldn't create https connector");
-        let http_client = Client::builder().build(connector);
+        let http_client = Client::builder().build(connector.clone());
+        let chunked_http_client = Builder::default().build::<HttpsConnector<HttpConnector>, ChunkedFilePayload>(connector);
         Self {
             inner: Arc::new(Mutex::new(BlackFynnImpl {
                 config,
                 http_client,
+                chunked_http_client,
                 session_token: None,
                 current_organization: None,
             })),
@@ -176,7 +180,11 @@ impl Blackfynn {
         String::from_utf8_lossy(&as_bytes).to_string()
     }
 
-    fn request<I, S, P, Q>(
+    fn get_url(&self) -> url::Url {
+        self.inner.lock().unwrap().config.env().url().clone()
+    }
+
+    fn request<I, P, S, Q>(
         &self,
         route: S,
         method: hyper::Method,
@@ -184,10 +192,116 @@ impl Blackfynn {
         payload: Option<&P>,
     ) -> bf::Future<Q>
     where
-        I: IntoIterator<Item = RequestParam>,
+        I: IntoIterator<Item = RequestParam> + Send,
         P: serde::Serialize,
         Q: 'static + Send + serde::de::DeserializeOwned,
-        S: Into<String>,
+        S: Into<String> + Send,
+    {
+
+        let url = self.get_url().to_string();
+        let f = self.request_with_body(route, method.clone(), params, payload)
+            .and_then(move |resp| Self::process_response(resp, method.to_string(), url));
+
+        into_future_trait(f)
+    }
+
+    fn request_chunked<I, S, T, Q>(
+        &self,
+        route: S,
+        params: I,
+        filepath: T
+    ) -> bf::Future<Q>
+    where
+        I: IntoIterator<Item = RequestParam> + Send,
+        S: Into<String> + Send,
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        T: AsRef<Path>,
+    {
+        let chunked_file_payload = ChunkedFilePayload::new(filepath);
+        let method = hyper::Method::POST;
+        let url = self.get_url().to_string();
+        let f = self.request_with_chunked_file(route, method.clone(), params, chunked_file_payload)
+            .and_then(move |resp| Self::process_response(resp, method.to_string(), url));
+
+        into_future_trait(f)
+    }
+
+    fn request_with_chunked_file<I, S>(
+        &self,
+        route: S,
+        method: hyper::Method,
+        params: I,
+        payload: ChunkedFilePayload
+    ) -> bf::Future<hyper::Response<hyper::Body>>
+    where
+        I: IntoIterator<Item = RequestParam>,
+        S: Into<String>
+    {
+        // Build the request url: config environment base + route:
+        let mut use_url = self.inner.lock().unwrap().config.env().url().clone();
+        use_url.set_path(&route.into());
+
+        let token = self.session_token().clone();
+        let client = self.inner.lock().unwrap().chunked_http_client.clone();
+
+        // If query parameters are provided, add them to the constructed URL:
+        for (k, v) in params {
+            use_url
+                .query_pairs_mut()
+                .append_pair(k.as_str(), v.as_str());
+        }
+
+        // Lift the URL and body into Future:
+        let uri = use_url
+            .to_string()
+            .parse::<hyper::Uri>()
+            .into_future()
+            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
+
+        let f = uri
+            .and_then(move |uri| {
+                let mut req = hyper::Request::builder()
+                    .method(method.clone())
+                    .uri(uri)
+                    .body(payload)
+                    .unwrap();
+
+                // If a session token exists, use it to set the "X-SESSION-ID"
+                // header to make subsequent requests:
+                if let Some(session_token) = token {
+                    req.headers_mut().insert(
+                        hyper::header::AUTHORIZATION,
+                        hyper::header::HeaderValue::from_str(&format!("Bearer {}", session_token.into_inner())).unwrap(),
+                    );
+                }
+
+                // Make the actual request:
+                client.request(req).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:execute",
+                            method = method.to_string(),
+                            url = use_url.to_string()
+                        ),
+                    )
+                })
+            });
+
+        into_future_trait(f)
+    }
+
+    fn request_with_body<I, P, S>(
+        &self,
+        route: S,
+        method: hyper::Method,
+        params: I,
+        payload: Option<&P>
+    ) -> bf::Future<hyper::Response<hyper::Body>>
+    where
+        P: serde::Serialize,
+        I: IntoIterator<Item = RequestParam>,
+        S: Into<String>
     {
         // Build the request url: config environment base + route:
         let mut use_url = self.inner.lock().unwrap().config.env().url().clone();
@@ -210,26 +324,18 @@ impl Blackfynn {
             .into_future()
             .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
 
-        let body: Result<hyper::Body, serde_json::Error> = match payload {
-            Some(p) => serde_json::to_string(p).map(Into::into),
-            None => Ok(hyper::Body::empty()),
-        };
-
-        let body = future::result::<_, bf::error::Error>(body.map_err(Into::into))
-            .map_err(|e| bf::Error::with_chain(e, "bf:request:body"));
-
-        let url_string_1 = use_url.to_string();
-        let method_string_1 = method.to_string();
-        let url_string_2 = use_url.to_string();
-        let method_string_2 = method.to_string();
-        let url_string_3 = use_url.to_string();
-        let method_string_3 = method.to_string();
-
-        let f = uri
-            .join(body)
-            .and_then(move |(uri, body): (hyper::Uri, hyper::Body)| {
+        let f = payload
+            .map(|p| {
+                serde_json::to_string(p)
+                    .map(Into::into)
+                    .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
+            })
+            .unwrap_or(Ok(hyper::Body::empty())).map_err(Into::into)
+            .into_future()
+            .join(uri)
+            .and_then(move |(body, uri)| {
                 let mut req = hyper::Request::builder()
-                    .method(method)
+                    .method(method.clone())
                     .uri(uri)
                     .body(body)
                     .unwrap();
@@ -242,83 +348,98 @@ impl Blackfynn {
                         hyper::header::HeaderValue::from_str(session_token.as_ref()).unwrap(),
                     );
                 }
+
                 // By default make every content type "application/json"
                 req.headers_mut().insert(
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 );
+
                 // Make the actual request:
                 client.request(req).map_err(move |e| {
                     bf::Error::with_chain(
                         e,
                         format!(
                             "bf:request<{method}:{url}>:execute",
-                            method = method_string_1,
-                            url = url_string_1
+                            method = method.to_string(),
+                            url = use_url.to_string()
                         ),
                     )
                 })
-            })
-            .and_then(|response: hyper::Response<hyper::Body>| {
-                // Check the status code. And 5XX code will result in the
-                // future terminating with an error containing the message
-                // emitted from the API:
-                let status_code = response.status();
-                response
-                    .into_body()
-                    .concat2()
-                    .map_err(move |e| {
-                        bf::Error::with_chain(
-                            e,
-                            format!(
-                                "bf:request<{method}:{url}>:response",
-                                method = method_string_2,
-                                url = url_string_2
-                            ),
-                        )
-                    })
-                    .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
-                    .and_then(
-                        move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
-                            if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(
-                                    bf::error::ErrorKind::ApiError(
-                                        status_code,
-                                        String::from_utf8_lossy(&body).to_string(),
-                                    ).into(),
-                                );
-                            }
-                            future::ok(body)
-                        },
-                    )
-                    .and_then(|body: hyper::Chunk| {
-                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
-                        // and equal to `DEBUG`, dump the request contents to stderr:
-                        if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
-                            if log_level == "DEBUG" {
-                                eprintln!(
-                                    "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = method_string_3,
-                                    url = url_string_3,
-                                    payload = Self::chunk_to_string(&body)
-                                );
-                            }
-                        }
-                        // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice::<Q>(&body).map_err(move |e| {
-                            bf::Error::with_chain(
-                                e,
-                                format!(
-                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = method_string_3,
-                                    url = url_string_3,
-                                    payload = Self::chunk_to_string(&body)
-                                ),
-                            )
-                        })
-                    })
             });
 
+        into_future_trait(f)
+    }
+
+    fn process_response<Q, S, T>(response: hyper::Response<hyper::Body>, method_string: S, url_string: T) -> bf::Future<Q>
+    where
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        S: Into<String>,
+        T: Into<String>
+    {
+        let method_string: String = method_string.into();
+        let url_string: String = url_string.into();
+        let method_string_clone = method_string.clone();
+        let url_string_clone = url_string.clone();
+
+        // Check the status code. And 5XX code will result in the
+        // future terminating with an error containing the message
+        // emitted from the API:
+        let status_code = response.status();
+        let f = response
+            .into_body()
+            .concat2()
+            .map_err(move |e| {
+                bf::Error::with_chain(
+                    e,
+                    format!(
+                        "bf:request<{method}:{url}>:response",
+                        method = method_string,
+                        url = url_string
+                    ),
+                )
+            })
+            .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
+            .and_then(
+                move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
+                    println!("response! {:?}", Self::chunk_to_string(&body);
+                    if status_code.is_client_error() || status_code.is_server_error() {
+                        return future::err(
+                            bf::error::ErrorKind::ApiError(
+                                status_code,
+                                String::from_utf8_lossy(&body).to_string(),
+                            ).into(),
+                        );
+                    }
+                    future::ok(body)
+                },
+            )
+            .and_then(|body: hyper::Chunk| {
+                // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
+                // and equal to `DEBUG`, dump the request contents to stderr:
+                if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
+                    if log_level == "DEBUG" {
+                        eprintln!(
+                            "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
+                            method = method_string_clone,
+                            url = url_string_clone,
+                            payload = Self::chunk_to_string(&body)
+                        );
+                    }
+                }
+                // Finally, attempt to parse the JSON response into a typeful representation:
+                serde_json::from_slice(&body).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                            method = method_string_clone,
+                            url = url_string_clone,
+                            payload = Self::chunk_to_string(&body)
+                        ),
+                    )
+                })
+            });
         into_future_trait(f)
     }
 
@@ -640,6 +761,29 @@ impl Blackfynn {
             params
         )
     }
+
+    /// Upload a file using the upload service.
+    pub fn upload<P>(
+        &self,
+        organization_id: &OrganizationId,
+        import_id: &ImportId,
+        filepath: P
+    ) -> bf::Future<response::UploadResponse>
+    where
+        P: AsRef<Path>,
+    {
+        self.request_chunked(
+            route!(
+                "/upload/organizations/{organization_id}/id/{import_id}",
+                organization_id,
+                import_id
+            ),
+            params!(
+                "filename" => filepath.as_ref().file_name().unwrap().to_str().unwrap()
+            ),
+            filepath
+        )
+    }
 }
 
 #[cfg(test)]
@@ -710,305 +854,305 @@ mod tests {
         }
     }
 
-    #[test]
-    fn login_successfully_locally() {
-        let bf = bf();
-        let result = bf.run(move |bf| bf.login(TEST_API_KEY, TEST_SECRET_KEY));
-        assert!(result.is_ok());
-        assert!(bf.session_token().is_some());
-    }
+    // #[test]
+    // fn login_successfully_locally() {
+    //     let bf = bf();
+    //     let result = bf.run(move |bf| bf.login(TEST_API_KEY, TEST_SECRET_KEY));
+    //     assert!(result.is_ok());
+    //     assert!(bf.session_token().is_some());
+    // }
 
-    #[test]
-    fn login_fails_locally() {
-        let bf = bf();
-        let result = bf.run(move |bf| bf.login(TEST_API_KEY, "this-is-a-bad-secret"));
-        assert!(result.is_err());
-        assert!(bf.session_token().is_none());
-    }
+    // #[test]
+    // fn login_fails_locally() {
+    //     let bf = bf();
+    //     let result = bf.run(move |bf| bf.login(TEST_API_KEY, "this-is-a-bad-secret"));
+    //     assert!(result.is_err());
+    //     assert!(bf.session_token().is_none());
+    // }
 
-    #[test]
-    fn fetching_organizations_after_login_is_successful() {
-        let org = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_organizations()),
-            )
-        });
+    // #[test]
+    // fn fetching_organizations_after_login_is_successful() {
+    //     let org = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_organizations()),
+    //         )
+    //     });
 
-        if org.is_err() {
-            panic!("{}", org.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if org.is_err() {
+    //         panic!("{}", org.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_user_after_login_is_successful() {
-        let user = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_user()),
-            )
-        });
+    // #[test]
+    // fn fetching_user_after_login_is_successful() {
+    //     let user = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_user()),
+    //         )
+    //     });
 
-        if user.is_err() {
-            panic!("{}", user.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if user.is_err() {
+    //         panic!("{}", user.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn updating_org_after_login_is_successful() {
-        let user = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_user().map(|user| (user, bf)))
-                    .and_then(move |(user, bf)| {
-                        let org = user.preferred_organization().clone();
-                        bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_user()),
-            )
-        });
+    // #[test]
+    // fn updating_org_after_login_is_successful() {
+    //     let user = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_user().map(|user| (user, bf)))
+    //                 .and_then(move |(user, bf)| {
+    //                     let org = user.preferred_organization().clone();
+    //                     bf.set_preferred_organization(org.cloned()).map(|_| bf)
+    //                 }).and_then(move |bf| bf.get_user()),
+    //         )
+    //     });
 
-        if user.is_err() {
-            panic!("{}", user.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if user.is_err() {
+    //         panic!("{}", user.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_organizations_fails_if_login_fails() {
-        let org = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, "another-bad-secret")
-                    .and_then(move |_| bf.get_organizations()),
-            )
-        });
+    // #[test]
+    // fn fetching_organizations_fails_if_login_fails() {
+    //     let org = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, "another-bad-secret")
+    //                 .and_then(move |_| bf.get_organizations()),
+    //         )
+    //     });
 
-        assert!(org.is_err());
-    }
+    //     assert!(org.is_err());
+    // }
 
-    #[test]
-    fn fetching_organization_by_id_is_successful() {
-        let org = bf().run(move |bf| {
-            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                bf.get_organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
-            }))
-        });
+    // #[test]
+    // fn fetching_organization_by_id_is_successful() {
+    //     let org = bf().run(move |bf| {
+    //         into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+    //             bf.get_organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
+    //         }))
+    //     });
 
-        if org.is_err() {
-            panic!("{}", org.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if org.is_err() {
+    //         panic!("{}", org.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_datasets_after_login_is_successful() {
-        let ds = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_datasets()),
-            )
-        });
+    // #[test]
+    // fn fetching_datasets_after_login_is_successful() {
+    //     let ds = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_datasets()),
+    //         )
+    //     });
 
-        if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if ds.is_err() {
+    //         panic!("{}", ds.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_datasets_fails_if_login_fails() {
-        let ds = bf().run(move |bf| into_future_trait(bf.get_datasets()));
-        assert!(ds.is_err());
-    }
+    // #[test]
+    // fn fetching_datasets_fails_if_login_fails() {
+    //     let ds = bf().run(move |bf| into_future_trait(bf.get_datasets()));
+    //     assert!(ds.is_err());
+    // }
 
-    #[test]
-    fn fetching_dataset_by_id_successful_if_logged_in_and_exists() {
-        let ds = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
-            )
-        });
+    // #[test]
+    // fn fetching_dataset_by_id_successful_if_logged_in_and_exists() {
+    //     let ds = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
+    //         )
+    //     });
 
-        if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if ds.is_err() {
+    //         panic!("{}", ds.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_package_by_id_successful_if_logged_in_and_exists() {
-        let package = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_package_by_id(PackageId::new(FIXTURE_PACKAGE))),
-            )
-        });
-        if package.is_err() {
-            panic!("{}", package.unwrap_err().display_chain().to_string());
-        }
-    }
+    // #[test]
+    // fn fetching_package_by_id_successful_if_logged_in_and_exists() {
+    //     let package = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_package_by_id(PackageId::new(FIXTURE_PACKAGE))),
+    //         )
+    //     });
+    //     if package.is_err() {
+    //         panic!("{}", package.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_package_by_id_invalid_if_logged_in_and_exists() {
-        let package = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_package_by_id(PackageId::new("invalid_package_id"))),
-            )
-        });
+    // #[test]
+    // fn fetching_package_by_id_invalid_if_logged_in_and_exists() {
+    //     let package = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_package_by_id(PackageId::new("invalid_package_id"))),
+    //         )
+    //     });
 
-        if let Err(e) = package {
-            match e {
-                // blackfynn api returns 403 in this case..it should really be 404 I think
-                bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
-                    assert_eq!(status.as_u16(), 404)
-                }
-                _ => assert!(false),
-            }
-        }
-    }
+    //     if let Err(e) = package {
+    //         match e {
+    //             // blackfynn api returns 403 in this case..it should really be 404 I think
+    //             bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
+    //                 assert_eq!(status.as_u16(), 404)
+    //             }
+    //             _ => assert!(false),
+    //         }
+    //     }
+    // }
 
-    #[test]
-    fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
-        let ds = bf().run(move |bf| {
-            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                bf.get_dataset_by_id(DatasetId::new(
-                    "N:dataset:not-real-6803-4a67-bf20-83076774a5c7",
-                ))
-            }))
-        });
-        assert!(ds.is_err());
-    }
+    // #[test]
+    // fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
+    //     let ds = bf().run(move |bf| {
+    //         into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+    //             bf.get_dataset_by_id(DatasetId::new(
+    //                 "N:dataset:not-real-6803-4a67-bf20-83076774a5c7",
+    //             ))
+    //         }))
+    //     });
+    //     assert!(ds.is_err());
+    // }
 
-    #[test]
-    fn fetch_members() {
-        let members = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_user().map(|user| (user, bf)))
-                    .and_then(move |(user, bf)| {
-                        let org = user.preferred_organization().clone();
-                        bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_members()),
-            )
-        });
-        assert!(members.is_ok());
-    }
+    // #[test]
+    // fn fetch_members() {
+    //     let members = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_user().map(|user| (user, bf)))
+    //                 .and_then(move |(user, bf)| {
+    //                     let org = user.preferred_organization().clone();
+    //                     bf.set_preferred_organization(org.cloned()).map(|_| bf)
+    //                 }).and_then(move |bf| bf.get_members()),
+    //         )
+    //     });
+    //     assert!(members.is_ok());
+    // }
 
-    #[test]
-    fn fetch_teams() {
-        let teams = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_user().map(|user| (user, bf)))
-                    .and_then(move |(user, bf)| {
-                        let org = user.preferred_organization().clone();
-                        bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_teams()),
-            )
-        });
-        assert!(teams.is_ok());
-    }
+    // #[test]
+    // fn fetch_teams() {
+    //     let teams = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.get_user().map(|user| (user, bf)))
+    //                 .and_then(move |(user, bf)| {
+    //                     let org = user.preferred_organization().clone();
+    //                     bf.set_preferred_organization(org.cloned()).map(|_| bf)
+    //                 }).and_then(move |bf| bf.get_teams()),
+    //         )
+    //     });
+    //     assert!(teams.is_ok());
+    // }
 
-    #[test]
-    fn creating_then_updating_then_delete_dataset_successful() {
-        let result = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| {
-                        bf.create_dataset(request::dataset::Create::new(
-                            rand_suffix("$agent-test-dataset".to_string()),
-                            Some("A test dataset created by the agent".to_string()),
-                        )).map(|ds| (bf, ds))
-                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
-                    .and_then(move |(bf, id)| {
-                        bf.update_dataset(
-                            id.clone(),
-                            request::dataset::Update::new(
-                                "new-dataset-name",
-                                None as Option<String>,
-                            ),
-                        ).map(|_| (bf, id))
-                    }).and_then(move |(bf, id)| {
-                        let id = id.clone();
-                        bf.get_dataset_by_id(id.clone())
-                            .and_then(|ds| {
-                                assert_eq!(
-                                    ds.into_inner().name().clone(),
-                                    "new-dataset-name".to_string()
-                                );
-                                Ok(id)
-                            }).map(|id| (bf, id))
-                    }).and_then(move |(bf, id)| bf.delete_dataset(id)),
-            )
-        });
+    // #[test]
+    // fn creating_then_updating_then_delete_dataset_successful() {
+    //     let result = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| {
+    //                     bf.create_dataset(request::dataset::Create::new(
+    //                         rand_suffix("$agent-test-dataset".to_string()),
+    //                         Some("A test dataset created by the agent".to_string()),
+    //                     )).map(|ds| (bf, ds))
+    //                 }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+    //                 .and_then(move |(bf, id)| {
+    //                     bf.update_dataset(
+    //                         id.clone(),
+    //                         request::dataset::Update::new(
+    //                             "new-dataset-name",
+    //                             None as Option<String>,
+    //                         ),
+    //                     ).map(|_| (bf, id))
+    //                 }).and_then(move |(bf, id)| {
+    //                     let id = id.clone();
+    //                     bf.get_dataset_by_id(id.clone())
+    //                         .and_then(|ds| {
+    //                             assert_eq!(
+    //                                 ds.into_inner().name().clone(),
+    //                                 "new-dataset-name".to_string()
+    //                             );
+    //                             Ok(id)
+    //                         }).map(|id| (bf, id))
+    //                 }).and_then(move |(bf, id)| bf.delete_dataset(id)),
+    //         )
+    //     });
 
-        if result.is_err() {
-            panic!("{}", result.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if result.is_err() {
+    //         panic!("{}", result.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn creating_then_updating_then_delete_package_successful() {
-        let result = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| {
-                        bf.create_dataset(request::dataset::Create::new(
-                            rand_suffix("$agent-test-dataset".to_string()),
-                            Some("A test dataset created by the agent".to_string()),
-                        )).map(|ds| (bf, ds))
-                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
-                    .and_then(move |(bf, ds_id)| {
-                        bf.create_package(request::package::Create::new(
-                            rand_suffix("$agent-test-package"),
-                            Default::default(),
-                            ds_id.clone(),
-                        )).map(|pkg| (bf, ds_id, pkg))
-                    }).and_then(move |(bf, ds_id, pkg)| {
-                        let pkg_id = pkg.into_inner().id().clone();
-                        bf.update_package(
-                            pkg_id.clone(),
-                            request::package::Update::new("new-package-name"),
-                        ).map(|_| (bf, pkg_id, ds_id))
-                    }).and_then(move |(bf, pkg_id, ds_id)| {
-                        bf.get_package_by_id(pkg_id).and_then(|pkg| {
-                            assert_eq!(
-                                pkg.into_inner().name().clone(),
-                                "new-package-name".to_string()
-                            );
-                            Ok((bf, ds_id))
-                        })
-                    }).and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
-            )
-        });
+    // #[test]
+    // fn creating_then_updating_then_delete_package_successful() {
+    //     let result = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| {
+    //                     bf.create_dataset(request::dataset::Create::new(
+    //                         rand_suffix("$agent-test-dataset".to_string()),
+    //                         Some("A test dataset created by the agent".to_string()),
+    //                     )).map(|ds| (bf, ds))
+    //                 }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+    //                 .and_then(move |(bf, ds_id)| {
+    //                     bf.create_package(request::package::Create::new(
+    //                         rand_suffix("$agent-test-package"),
+    //                         Default::default(),
+    //                         ds_id.clone(),
+    //                     )).map(|pkg| (bf, ds_id, pkg))
+    //                 }).and_then(move |(bf, ds_id, pkg)| {
+    //                     let pkg_id = pkg.into_inner().id().clone();
+    //                     bf.update_package(
+    //                         pkg_id.clone(),
+    //                         request::package::Update::new("new-package-name"),
+    //                     ).map(|_| (bf, pkg_id, ds_id))
+    //                 }).and_then(move |(bf, pkg_id, ds_id)| {
+    //                     bf.get_package_by_id(pkg_id).and_then(|pkg| {
+    //                         assert_eq!(
+    //                             pkg.into_inner().name().clone(),
+    //                             "new-package-name".to_string()
+    //                         );
+    //                         Ok((bf, ds_id))
+    //                     })
+    //                 }).and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+    //         )
+    //     });
 
-        if result.is_err() {
-            panic!("{}", result.unwrap_err().display_chain().to_string());
-        }
-    }
+    //     if result.is_err() {
+    //         panic!("{}", result.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn fetching_upload_credential_granting_works() {
-        let cred = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.grant_upload(DatasetId::new(FIXTURE_DATASET))),
-            )
-        });
-        if cred.is_err() {
-            panic!("{}", cred.unwrap_err().display_chain().to_string());
-        }
-    }
+    // #[test]
+    // fn fetching_upload_credential_granting_works() {
+    //     let cred = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.grant_upload(DatasetId::new(FIXTURE_DATASET))),
+    //         )
+    //     });
+    //     if cred.is_err() {
+    //         panic!("{}", cred.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
-    #[test]
-    fn preview_upload_file_working() {
-        let preview = bf().run(move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false)),
-            )
-        });
-        if preview.is_err() {
-            panic!("{}", preview.unwrap_err().display_chain().to_string());
-        }
-    }
+    // #[test]
+    // fn preview_upload_file_working() {
+    //     let preview = bf().run(move |bf| {
+    //         into_future_trait(
+    //             bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+    //                 .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false)),
+    //         )
+    //     });
+    //     if preview.is_err() {
+    //         panic!("{}", preview.unwrap_err().display_chain().to_string());
+    //     }
+    // }
 
     struct UploadScaffold {
         dataset_id: DatasetId,
@@ -1050,264 +1194,300 @@ mod tests {
         })
     }
 
+    // #[test]
+    // fn simple_file_uploading() {
+    //     let result = bf().run(move |bf| {
+    //         let f =
+    //             create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+    //                 .and_then(move |(scaffold, bf)| {
+    //                     let bf_clone = bf.clone();
+    //                     let upload_credential = scaffold.upload_credential.clone();
+    //                     let uploader = bf
+    //                         .s3_uploader(
+    //                             scaffold
+    //                                 .upload_credential
+    //                                 .into_inner()
+    //                                 .take_temp_credentials(),
+    //                         ).unwrap();
+    //                     let dataset_id = scaffold.dataset_id.clone();
+    //                     let outer_dataset_id = dataset_id.clone();
+    //                     stream::futures_unordered(scaffold.preview.into_iter().map(
+    //                         move |package| {
+    //                             let dataset_id = dataset_id.clone();
+    //                             let upload_credential = upload_credential.clone();
+    //                             // Simple, non-multipart uploading:
+    //                             uploader
+    //                                 .put_objects(
+    //                                     &*TEST_DATA_DIR,
+    //                                     package.files(),
+    //                                     package.import_id().clone(),
+    //                                     upload_credential.into(),
+    //                                 ).map(move |import_id| (dataset_id, import_id))
+    //                         },
+    //                     )).map(move |(dataset_id, import_id)| {
+    //                         bf.complete_upload(import_id, dataset_id.clone(), None, false)
+    //                     }).collect()
+    //                     .map(move |fs| (bf_clone, outer_dataset_id, fs))
+    //                 }).and_then(|(bf, dataset_id, fs)| {
+    //                     stream::futures_unordered(fs)
+    //                         .collect()
+    //                         .map(|manifests| (bf, dataset_id, manifests))
+    //                 }).and_then(|(bf, dataset_id, manifests)| {
+    //                     let mut file_count = 0;
+    //                     for manifest in manifests {
+    //                         for entry in manifest.entries() {
+    //                             let n = entry.files().len();
+    //                             assert!(n > 0);
+    //                             file_count += n;
+    //                         }
+    //                     }
+    //                     assert_eq!(file_count, TEST_FILES.len());
+    //                     Ok((bf, dataset_id))
+    //                 }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+
+    //         into_future_trait(f)
+    //     });
+
+    //     if result.is_err() {
+    //         println!("{}", result.unwrap_err().display_chain().to_string());
+    //         panic!();
+    //     }
+    // }
+
+    // #[test]
+    // fn multipart_file_uploading() {
+    //     let result = bf().run(move |bf| {
+    //         let bf_clone = bf.clone();
+    //         let f =
+    //             create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+    //                 .and_then(move |(scaffold, bf)| {
+    //                     let dataset_id = scaffold.dataset_id.clone();
+    //                     let dataset_id_inner = scaffold.dataset_id.clone();
+    //                     let cred = scaffold.upload_credential.clone();
+    //                     let uploader = bf
+    //                         .s3_uploader(
+    //                             scaffold
+    //                                 .upload_credential
+    //                                 .into_inner()
+    //                                 .take_temp_credentials(),
+    //                         ).unwrap();
+    //                     stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
+    //                         move |package| {
+    //                             uploader.multipart_upload_files(
+    //                                 &*TEST_DATA_DIR,
+    //                                 package.files(),
+    //                                 package.import_id().clone(),
+    //                                 cred.clone().into(),
+    //                             )
+    //                         },
+    //                     )).flatten()
+    //                     .filter_map(move |result| match result {
+    //                         MultipartUploadResult::Complete(import_id, _) => {
+    //                             Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
+    //                         }
+    //                         _ => None,
+    //                     }).collect()
+    //                     .map(|fs| (fs, dataset_id_inner))
+    //                 }).and_then(|(fs, dataset_id)| {
+    //                     stream::futures_unordered(fs)
+    //                         .collect()
+    //                         .map(|manifests| (dataset_id, manifests))
+    //                 }).and_then(|(dataset_id, manifests)| {
+    //                     let mut file_count = 0;
+    //                     for manifest in manifests {
+    //                         for entry in manifest.entries() {
+    //                             let n = entry.files().len();
+    //                             assert!(n > 0);
+    //                             file_count += n;
+    //                         }
+    //                     }
+    //                     assert_eq!(file_count, TEST_FILES.len());
+    //                     Ok(dataset_id)
+    //                 }).and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
+
+    //         into_future_trait(f)
+    //     });
+
+    //     if result.is_err() {
+    //         println!("{}", result.unwrap_err().display_chain().to_string());
+    //         panic!();
+    //     }
+    // }
+
+    // #[derive(Debug)]
+    // enum UploadStatus<S: Debug, T: Debug> {
+    //     Completed(S),
+    //     Aborted(T),
+    // }
+
+    // #[test]
+    // fn multipart_big_file_uploading() {
+    //     struct Inner(sync::Mutex<bool>);
+
+    //     impl Inner {
+    //         pub fn new() -> Self {
+    //             Inner(sync::Mutex::new(false))
+    //         }
+    //     }
+
+    //     struct ProgressIndicator {
+    //         inner: sync::Arc<Inner>,
+    //     }
+
+    //     impl Clone for ProgressIndicator {
+    //         fn clone(&self) -> Self {
+    //             Self {
+    //                 inner: Arc::clone(&self.inner),
+    //             }
+    //         }
+    //     }
+
+    //     impl ProgressIndicator {
+    //         pub fn new() -> Self {
+    //             Self {
+    //                 inner: sync::Arc::new(Inner::new()),
+    //             }
+    //         }
+    //     }
+
+    //     impl ProgressCallback for ProgressIndicator {
+    //         fn on_update(&self, _update: &ProgressUpdate) {
+    //             *self.inner.0.lock().unwrap() = true;
+    //         }
+    //     }
+
+    //     let cb = ProgressIndicator::new();
+
+    //     let result = bf().run(move |bf| {
+    //         let cb = cb.clone();
+
+    //         let f = create_upload_scaffold(
+    //             (*BIG_TEST_DATA_DIR).to_string(),
+    //             (&*BIG_TEST_FILES).to_vec(),
+    //         )(bf).and_then(|(scaffold, bf)| {
+    //             let bf_clone = bf.clone();
+    //             let cred = scaffold.upload_credential.clone();
+    //             let dataset_id = scaffold.dataset_id.clone();
+    //             let dataset_id_outer = dataset_id.clone();
+    //             let mut uploader = bf
+    //                 .s3_uploader(
+    //                     scaffold
+    //                         .upload_credential
+    //                         .into_inner()
+    //                         .take_temp_credentials(),
+    //                 ).unwrap();
+    //             // Check the progress of the upload by polling every 1s:
+    //             if let Ok(mut indicator) = uploader.progress() {
+    //                 thread::spawn(move || {
+    //                     let done = cell::RefCell::new(HashSet::<path::PathBuf>::new());
+    //                     loop {
+    //                         thread::sleep(time::Duration::from_millis(1000));
+    //                         for (path, update) in &mut indicator {
+    //                             let p = path.to_path_buf();
+    //                             if !done.borrow().contains(&p) {
+    //                                 println!("{:?} => {}%", p, update.percent_done());
+    //                                 if update.completed() {
+    //                                     done.borrow_mut().insert(p);
+    //                                 }
+    //                             }
+    //                         }
+    //                     }
+    //                 });
+    //             }
+
+    //             stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
+    //                 move |package| {
+    //                     let cb = cb.clone();
+    //                     uploader.multipart_upload_files_cb(
+    //                         &*BIG_TEST_DATA_DIR,
+    //                         package.files(),
+    //                         package.import_id().clone(),
+    //                         cred.clone().into(),
+    //                         cb,
+    //                     )
+    //                 },
+    //             )).flatten()
+    //             .map(move |result| {
+    //                 match result {
+    //                     MultipartUploadResult::Complete(import_id, _) => {
+    //                         into_future_trait(
+    //                             bf.complete_upload(import_id, dataset_id.clone(), None, false)
+    //                                 .then(|r| {
+    //                                     // wrap the results as an UploadStatus so we can return
+    //                                     // errors as strictly value, rather something that will
+    //                                     // affect the control flow of the future itself:
+    //                                     match r {
+    //                                         Ok(manifest) => Ok(UploadStatus::Completed(manifest)),
+    //                                         Err(err) => Ok(UploadStatus::Aborted(err)),
+    //                                     }
+    //                                 }),
+    //                         )
+    //                     }
+    //                     MultipartUploadResult::Abort(originating_err, _) => {
+    //                         into_future_trait(future::ok(UploadStatus::Aborted(originating_err)))
+    //                     }
+    //                 }
+    //             }).collect()
+    //             .map(|fs| (bf_clone, fs, dataset_id_outer))
+    //         }).and_then(|(bf, fs, dataset_id)| {
+    //             stream::futures_unordered(fs)
+    //                 .collect()
+    //                 .map(|manifests| (bf, dataset_id, manifests))
+    //         }).and_then(|(bf, dataset_id, manifests)| {
+    //             for entry in manifests {
+    //                 match entry {
+    //                     UploadStatus::Completed(_) => assert!(true),
+    //                     UploadStatus::Aborted(e) => {
+    //                         println!("ABORTED => {:#?}", e);
+    //                         assert!(false)
+    //                     }
+    //                 }
+    //             }
+    //             Ok((bf, dataset_id))
+    //         }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
+
+    //         into_future_trait(f)
+    //     });
+
+    //     if result.is_err() {
+    //         println!("{}", result.unwrap_err().display_chain().to_string());
+    //         panic!();
+    //     }
+    // }
+
     #[test]
-    fn simple_file_uploading() {
+    fn upload_using_upload_service() {
         let result = bf().run(move |bf| {
             let f =
                 create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
-                    .and_then(move |(scaffold, bf)| {
+                    .and_then(move |(scaffold, bf)| bf.get_user().map(|user| (user, scaffold, bf)))
+                    .and_then(move |(user, scaffold, bf)| {
                         let bf_clone = bf.clone();
-                        let upload_credential = scaffold.upload_credential.clone();
-                        let uploader = bf
-                            .s3_uploader(
-                                scaffold
-                                    .upload_credential
-                                    .into_inner()
-                                    .take_temp_credentials(),
-                            ).unwrap();
+                        let org = user.preferred_organization().clone().unwrap();
+
                         let dataset_id = scaffold.dataset_id.clone();
-                        let outer_dataset_id = dataset_id.clone();
+
                         stream::futures_unordered(scaffold.preview.into_iter().map(
                             move |package| {
-                                let dataset_id = dataset_id.clone();
-                                let upload_credential = upload_credential.clone();
-                                // Simple, non-multipart uploading:
-                                uploader
-                                    .put_objects(
-                                        &*TEST_DATA_DIR,
-                                        package.files(),
-                                        package.import_id().clone(),
-                                        upload_credential.into(),
-                                    ).map(move |import_id| (dataset_id, import_id))
-                            },
-                        )).map(move |(dataset_id, import_id)| {
-                            bf.complete_upload(import_id, dataset_id.clone(), None, false)
-                        }).collect()
-                        .map(move |fs| (bf_clone, outer_dataset_id, fs))
-                    }).and_then(|(bf, dataset_id, fs)| {
-                        stream::futures_unordered(fs)
-                            .collect()
-                            .map(|manifests| (bf, dataset_id, manifests))
-                    }).and_then(|(bf, dataset_id, manifests)| {
-                        let mut file_count = 0;
-                        for manifest in manifests {
-                            for entry in manifest.entries() {
-                                let n = entry.files().len();
-                                assert!(n > 0);
-                                file_count += n;
-                            }
-                        }
-                        assert_eq!(file_count, TEST_FILES.len());
-                        Ok((bf, dataset_id))
-                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
-
-            into_future_trait(f)
-        });
-
-        if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
-            panic!();
-        }
-    }
-
-    #[test]
-    fn multipart_file_uploading() {
-        let result = bf().run(move |bf| {
-            let bf_clone = bf.clone();
-            let f =
-                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
-                    .and_then(move |(scaffold, bf)| {
-                        let dataset_id = scaffold.dataset_id.clone();
-                        let dataset_id_inner = scaffold.dataset_id.clone();
-                        let cred = scaffold.upload_credential.clone();
-                        let uploader = bf
-                            .s3_uploader(
-                                scaffold
-                                    .upload_credential
-                                    .into_inner()
-                                    .take_temp_credentials(),
-                            ).unwrap();
-                        stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
-                            move |package| {
-                                uploader.multipart_upload_files(
-                                    &*TEST_DATA_DIR,
-                                    package.files(),
-                                    package.import_id().clone(),
-                                    cred.clone().into(),
+                                bf.upload(
+                                    org, &package.import_id(),
+                                    Path::new(
+                                        "/Users/mattusifer/src/bf/blackfynn-rust/test/data/small/brain.jpg"
+                                    ).to_path_buf().canonicalize().unwrap()
                                 )
-                            },
-                        )).flatten()
-                        .filter_map(move |result| match result {
-                            MultipartUploadResult::Complete(import_id, _) => {
-                                Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
                             }
-                            _ => None,
-                        }).collect()
-                        .map(|fs| (fs, dataset_id_inner))
-                    }).and_then(|(fs, dataset_id)| {
-                        stream::futures_unordered(fs)
-                            .collect()
-                            .map(|manifests| (dataset_id, manifests))
-                    }).and_then(|(dataset_id, manifests)| {
-                        let mut file_count = 0;
-                        for manifest in manifests {
-                            for entry in manifest.entries() {
-                                let n = entry.files().len();
-                                assert!(n > 0);
-                                file_count += n;
-                            }
-                        }
-                        assert_eq!(file_count, TEST_FILES.len());
-                        Ok(dataset_id)
-                    }).and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
-
-            into_future_trait(f)
-        });
-
-        if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
-            panic!();
-        }
-    }
-
-    #[derive(Debug)]
-    enum UploadStatus<S: Debug, T: Debug> {
-        Completed(S),
-        Aborted(T),
-    }
-
-    #[test]
-    fn multipart_big_file_uploading() {
-        struct Inner(sync::Mutex<bool>);
-
-        impl Inner {
-            pub fn new() -> Self {
-                Inner(sync::Mutex::new(false))
-            }
-        }
-
-        struct ProgressIndicator {
-            inner: sync::Arc<Inner>,
-        }
-
-        impl Clone for ProgressIndicator {
-            fn clone(&self) -> Self {
-                Self {
-                    inner: Arc::clone(&self.inner),
-                }
-            }
-        }
-
-        impl ProgressIndicator {
-            pub fn new() -> Self {
-                Self {
-                    inner: sync::Arc::new(Inner::new()),
-                }
-            }
-        }
-
-        impl ProgressCallback for ProgressIndicator {
-            fn on_update(&self, _update: &ProgressUpdate) {
-                *self.inner.0.lock().unwrap() = true;
-            }
-        }
-
-        let cb = ProgressIndicator::new();
-
-        let result = bf().run(move |bf| {
-            let cb = cb.clone();
-
-            let f = create_upload_scaffold(
-                (*BIG_TEST_DATA_DIR).to_string(),
-                (&*BIG_TEST_FILES).to_vec(),
-            )(bf).and_then(|(scaffold, bf)| {
-                let bf_clone = bf.clone();
-                let cred = scaffold.upload_credential.clone();
-                let dataset_id = scaffold.dataset_id.clone();
-                let dataset_id_outer = dataset_id.clone();
-                let mut uploader = bf
-                    .s3_uploader(
-                        scaffold
-                            .upload_credential
-                            .into_inner()
-                            .take_temp_credentials(),
-                    ).unwrap();
-                // Check the progress of the upload by polling every 1s:
-                if let Ok(mut indicator) = uploader.progress() {
-                    thread::spawn(move || {
-                        let done = cell::RefCell::new(HashSet::<path::PathBuf>::new());
-                        loop {
-                            thread::sleep(time::Duration::from_millis(1000));
-                            for (path, update) in &mut indicator {
-                                let p = path.to_path_buf();
-                                if !done.borrow().contains(&p) {
-                                    println!("{:?} => {}%", p, update.percent_done());
-                                    if update.completed() {
-                                        done.borrow_mut().insert(p);
-                                    }
-                                }
-                            }
-                        }
+                        )).collect().map(|_| (bf_clone, dataset_id))
                     });
-                }
-
-                stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
-                    move |package| {
-                        let cb = cb.clone();
-                        uploader.multipart_upload_files_cb(
-                            &*BIG_TEST_DATA_DIR,
-                            package.files(),
-                            package.import_id().clone(),
-                            cred.clone().into(),
-                            cb,
-                        )
-                    },
-                )).flatten()
-                .map(move |result| {
-                    match result {
-                        MultipartUploadResult::Complete(import_id, _) => {
-                            into_future_trait(
-                                bf.complete_upload(import_id, dataset_id.clone(), None, false)
-                                    .then(|r| {
-                                        // wrap the results as an UploadStatus so we can return
-                                        // errors as strictly value, rather something that will
-                                        // affect the control flow of the future itself:
-                                        match r {
-                                            Ok(manifest) => Ok(UploadStatus::Completed(manifest)),
-                                            Err(err) => Ok(UploadStatus::Aborted(err)),
-                                        }
-                                    }),
-                            )
-                        }
-                        MultipartUploadResult::Abort(originating_err, _) => {
-                            into_future_trait(future::ok(UploadStatus::Aborted(originating_err)))
-                        }
-                    }
-                }).collect()
-                .map(|fs| (bf_clone, fs, dataset_id_outer))
-            }).and_then(|(bf, fs, dataset_id)| {
-                stream::futures_unordered(fs)
-                    .collect()
-                    .map(|manifests| (bf, dataset_id, manifests))
-            }).and_then(|(bf, dataset_id, manifests)| {
-                for entry in manifests {
-                    match entry {
-                        UploadStatus::Completed(_) => assert!(true),
-                        UploadStatus::Aborted(e) => {
-                            println!("ABORTED => {:#?}", e);
-                            assert!(false)
-                        }
-                    }
-                }
-                Ok((bf, dataset_id))
-            }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
+                // .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
 
-        if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
-            panic!();
-        }
+        panic!();
+
+        // if result.is_err() {
+        //     println!("{}", result.unwrap_err().display_chain().to_string());
+        //     panic!();
+        // }
     }
 }
