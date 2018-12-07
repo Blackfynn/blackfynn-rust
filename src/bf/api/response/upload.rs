@@ -76,6 +76,6 @@ impl IntoIterator for Manifests {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadResponse {
-    success: bool,
-    error: Option<String>
+    pub success: bool,
+    pub error: Option<String>
 }
