@@ -185,7 +185,7 @@ impl Blackfynn {
         self.inner.lock().unwrap().config.env().url().clone()
     }
 
-    fn request<I, P, S, Q>(
+    fn request<I, P, Q, S>(
         &self,
         route: S,
         method: hyper::Method,
@@ -193,117 +193,16 @@ impl Blackfynn {
         payload: Option<&P>,
     ) -> bf::Future<Q>
     where
-        I: IntoIterator<Item = RequestParam> + Send,
-        P: serde::Serialize,
-        Q: 'static + Send + serde::de::DeserializeOwned,
-        S: Into<String> + Send,
-    {
-        let url = self.get_url().to_string();
-        let f = self
-            .request_with_body(route, method.clone(), params, payload)
-            .and_then(move |resp| Self::process_response(resp, method.to_string(), url));
-
-        into_future_trait(f)
-    }
-
-    fn request_chunked<I, S, T, Q>(&self, route: S, params: I, filepath: T) -> bf::Future<Q>
-    where
-        I: IntoIterator<Item = RequestParam> + Send,
-        S: Into<String> + Send,
-        Q: 'static + Send + serde::de::DeserializeOwned,
-        T: AsRef<Path>,
-    {
-        let chunked_file_payload = ChunkedFilePayload::new(filepath);
-        let method = hyper::Method::POST;
-        let url = self.get_url().to_string();
-        let f = self
-            .request_with_chunked_file(route, method.clone(), params, chunked_file_payload)
-            .and_then(move |resp| Self::process_response(resp, method.to_string(), url));
-
-        into_future_trait(f)
-    }
-
-    fn request_with_chunked_file<I, S>(
-        &self,
-        route: S,
-        method: hyper::Method,
-        params: I,
-        payload: ChunkedFilePayload,
-    ) -> bf::Future<hyper::Response<hyper::Body>>
-    where
-        I: IntoIterator<Item = RequestParam>,
-        S: Into<String>,
-    {
-        // Build the request url: config environment base + route:
-        let mut use_url = self.inner.lock().unwrap().config.env().url().clone();
-        use_url.set_path(&route.into());
-
-        let token = self.session_token().clone();
-        let client = self.inner.lock().unwrap().chunked_http_client.clone();
-
-        // If query parameters are provided, add them to the constructed URL:
-        for (k, v) in params {
-            use_url
-                .query_pairs_mut()
-                .append_pair(k.as_str(), v.as_str());
-        }
-
-        // Lift the URL and body into Future:
-        let uri = use_url
-            .to_string()
-            .parse::<hyper::Uri>()
-            .into_future()
-            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
-
-        let f = uri.and_then(move |uri| {
-            let mut req = hyper::Request::builder()
-                .method(method.clone())
-                .uri(uri)
-                .body(payload)
-                .unwrap();
-
-            // If a session token exists, use it to set the "X-SESSION-ID"
-            // header to make subsequent requests:
-            if let Some(session_token) = token {
-                req.headers_mut().insert(
-                    hyper::header::AUTHORIZATION,
-                    hyper::header::HeaderValue::from_str(&format!(
-                        "Bearer {}",
-                        session_token.into_inner()
-                    )).unwrap(),
-                );
-            }
-
-            // Make the actual request:
-            client.request(req).map_err(move |e| {
-                bf::Error::with_chain(
-                    e,
-                    format!(
-                        "bf:request<{method}:{url}>:execute",
-                        method = method.to_string(),
-                        url = use_url.to_string()
-                    ),
-                )
-            })
-        });
-
-        into_future_trait(f)
-    }
-
-    fn request_with_body<I, P, S>(
-        &self,
-        route: S,
-        method: hyper::Method,
-        params: I,
-        payload: Option<&P>,
-    ) -> bf::Future<hyper::Response<hyper::Body>>
-    where
         P: serde::Serialize,
         I: IntoIterator<Item = RequestParam>,
+        Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
+        let url = self.get_url();
+        let method_clone = method.clone();
+
         // Build the request url: config environment base + route:
-        let mut use_url = self.inner.lock().unwrap().config.env().url().clone();
+        let mut use_url = url.clone();
         use_url.set_path(&route.into());
 
         let token = self.session_token().clone();
@@ -365,7 +264,79 @@ impl Blackfynn {
                         ),
                     )
                 })
-            });
+            })
+            .and_then(move |resp| Self::process_response(resp, method_clone.to_string(), url.to_string()));
+
+        into_future_trait(f)
+    }
+
+    fn request_chunked<I, S, Q, T>(
+        &self,
+        route: S,
+        params: I,
+        filepath: T,
+    ) -> bf::Future<Q>
+    where
+        I: IntoIterator<Item = RequestParam>,
+        S: Into<String>,
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        T: AsRef<Path>,
+    {
+        let chunked_file_payload = ChunkedFilePayload::new(filepath);
+        let url = self.get_url();
+
+        // Build the request url: config environment base + route:
+        let mut use_url = url.clone();
+        use_url.set_path(&route.into());
+
+        let token = self.session_token().clone();
+        let client = self.inner.lock().unwrap().chunked_http_client.clone();
+
+        // If query parameters are provided, add them to the constructed URL:
+        for (k, v) in params {
+            use_url
+                .query_pairs_mut()
+                .append_pair(k.as_str(), v.as_str());
+        }
+
+        // Lift the URL and body into Future:
+        let uri = use_url
+            .to_string()
+            .parse::<hyper::Uri>()
+            .into_future()
+            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
+
+        let f = uri.and_then(move |uri| {
+            let mut req = hyper::Request::builder()
+                .method(hyper::Method::POST)
+                .uri(uri)
+                .body(chunked_file_payload)
+                .unwrap();
+
+            // If a session token exists, use it to set the "X-SESSION-ID"
+            // header to make subsequent requests:
+            if let Some(session_token) = token {
+                req.headers_mut().insert(
+                    hyper::header::AUTHORIZATION,
+                    hyper::header::HeaderValue::from_str(&format!(
+                        "Bearer {}",
+                        session_token.into_inner()
+                    )).unwrap(),
+                );
+            }
+
+            // Make the actual request:
+            client.request(req).map_err(move |e| {
+                bf::Error::with_chain(
+                    e,
+                    format!(
+                        "bf:request<{method}:{url}>:execute",
+                        method = hyper::Method::POST,
+                        url = use_url.to_string()
+                    ),
+                )
+            })
+        }).and_then(move |resp| Self::process_response(resp, hyper::Method::POST.to_string(), url.to_string()));
 
         into_future_trait(f)
     }
@@ -1473,6 +1444,7 @@ mod tests {
 
     #[test]
     fn upload_using_upload_service() {
+        // create upload
         let result = bf().run(move |bf| {
             let f = create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(
                 bf,
@@ -1509,9 +1481,12 @@ mod tests {
             into_future_trait(f)
         });
 
+        // check result
         if result.is_err() {
             println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
         }
+
+        // TODO: check that upload exists in the platform
     }
 }
