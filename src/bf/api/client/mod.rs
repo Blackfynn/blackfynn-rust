@@ -713,12 +713,14 @@ impl Blackfynn {
     /// Completes the file upload process.
     pub fn complete_upload(
         &self,
-        import_id: ImportId,
-        dataset_id: DatasetId,
+        import_id: &ImportId,
+        dataset_id: &DatasetId,
         destination_id: Option<&PackageId>,
         append: bool,
+        use_upload_service: bool
     ) -> bf::Future<response::Manifests> {
         let mut params = params!(
+            "uploadService" => if use_upload_service { "true" } else { "false" },
             "append" => if append { "true" } else { "false" },
             "datasetId" => dataset_id
         );
@@ -734,7 +736,7 @@ impl Blackfynn {
     }
 
     /// Upload a file using the upload service.
-    pub fn upload_using_upload_service<P>(
+    pub fn upload<P>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -753,22 +755,6 @@ impl Blackfynn {
                 "filename" => filepath.as_ref().file_name().unwrap().to_str().unwrap()
             ),
             filepath,
-        )
-    }
-
-    pub fn complete_upload_using_upload_service(
-        &self,
-        import_id: &ImportId,
-        dataset_id: &DatasetId,
-    ) -> bf::Future<response::Manifests> {
-        post!(
-            self,
-            route!("/files/upload/complete/{import_id}", import_id),
-            params!(
-                "append" => "false",
-                "datasetId" => dataset_id,
-                "uploadService" => "true"
-            )
         )
     }
 }
@@ -1212,7 +1198,7 @@ mod tests {
                                     ).map(move |import_id| (dataset_id, import_id))
                             },
                         )).map(move |(dataset_id, import_id)| {
-                            bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                            bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false)
                         }).collect()
                         .map(move |fs| (bf_clone, outer_dataset_id, fs))
                     }).and_then(|(bf, dataset_id, fs)| {
@@ -1270,7 +1256,7 @@ mod tests {
                         )).flatten()
                         .filter_map(move |result| match result {
                             MultipartUploadResult::Complete(import_id, _) => {
-                                Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
+                                Some(bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false))
                             }
                             _ => None,
                         }).collect()
@@ -1398,7 +1384,7 @@ mod tests {
                     match result {
                         MultipartUploadResult::Complete(import_id, _) => {
                             into_future_trait(
-                                bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                                bf.complete_upload(&import_id, &dataset_id, None, false, false)
                                     .then(|r| {
                                         // wrap the results as an UploadStatus so we can return
                                         // errors as strictly value, rather something that will
@@ -1455,24 +1441,34 @@ mod tests {
                 let dataset_id = scaffold.dataset_id.clone();
                 let dataset_id_clone = scaffold.dataset_id.clone();
 
-                stream::futures_unordered(scaffold.preview.into_iter().map(move |package| {
-                    // let mut filepath = Path::new(&TEST_DATA_DIR).to_path_buf();
-
+                stream::futures_unordered(scaffold.preview.into_iter().flat_map(move |package| {
                     let import_id = package.import_id().clone();
-                    let bf_clone_2 = bf.clone();
-                    let dataset_id_clone_2 = dataset_id.clone();
+                    let bf = bf.clone();
+                    let dataset_id = dataset_id.clone();
+                    let package = package.clone();
+                    let package_files = package.files().clone();
 
-                    bf.upload_using_upload_service(
-                        org,
-                        &import_id,
-                        Path::new(
-                            "/Users/mattusifer/src/bf/blackfynn-rust/test/data/small/brain.jpg",
-                        ).to_path_buf()
-                        .canonicalize()
-                        .unwrap(),
-                    ).map(|_| (bf_clone_2, dataset_id_clone_2))
-                    .and_then(move |(bf, dataset_id)| {
-                        bf.complete_upload_using_upload_service(&import_id, &dataset_id)
+                    package_files.into_iter().map(move |package_file| {
+                        let mut filepath = path::Path::new(&TEST_DATA_DIR.to_string()).to_path_buf();
+                        filepath.push(package_file.file_name().to_string());
+
+                        let bf = bf.clone();
+                        let bf_clone = bf.clone();
+                        let dataset_id = dataset_id.clone();
+                        let org = org.clone();
+                        let import_id = import_id.clone();
+                        let import_id_clone = import_id.clone();
+
+                        bf.upload(
+                            &org,
+                            &import_id_clone,
+                            filepath
+                                .canonicalize()
+                                .unwrap(),
+                        ).map(|_| (bf_clone, dataset_id))
+                            .and_then(move |(bf, dataset_id)| {
+                                bf.complete_upload(&import_id_clone, &dataset_id, None, false, true)
+                            })
                     })
                 })).collect()
                 .map(|_| (bf_clone, dataset_id_clone))
