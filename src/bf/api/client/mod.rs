@@ -3,11 +3,14 @@
 //! Functions to interact with the Blackfynn platform.
 
 pub mod s3;
+pub mod progress;
 
 pub use self::s3::{
-    MultipartUploadResult, ProgressCallback, ProgressUpdate, S3Uploader, UploadProgress,
+    MultipartUploadResult, S3Uploader, UploadProgress,
     UploadProgressIter,
 };
+
+pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::env;
 use std::path::Path;
@@ -36,22 +39,22 @@ use bf::util::futures::into_future_trait;
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
 
-struct BlackFynnImpl {
+struct BlackFynnImpl<C: ProgressCallback> {
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
-    chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload>,
+    chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>,
     session_token: Option<SessionToken>,
     current_organization: Option<OrganizationId>,
 }
 
 /// The Blackfynn client.
-pub struct Blackfynn {
+pub struct Blackfynn<C: ProgressCallback> {
     // See https://users.rust-lang.org/t/best-pattern-for-async-update-of-self-object/15205
     // for notes on this pattern:
-    inner: Arc<Mutex<BlackFynnImpl>>,
+    inner: Arc<Mutex<BlackFynnImpl<C>>>,
 }
 
-impl Clone for Blackfynn {
+impl<C: ProgressCallback> Clone for Blackfynn<C> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -154,13 +157,15 @@ macro_rules! delete {
 
 // ============================================================================s
 
-impl Blackfynn {
+impl<C> Blackfynn<C>
+where C: 'static + ProgressCallback
+{
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
         let connector = HttpsConnector::new(4).expect("bf:couldn't create https connector");
         let http_client = Client::builder().build(connector.clone());
         let chunked_http_client = Builder::default()
-            .build::<HttpsConnector<HttpConnector>, ChunkedFilePayload>(connector);
+            .build::<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>(connector);
         Self {
             inner: Arc::new(Mutex::new(BlackFynnImpl {
                 config,
@@ -275,6 +280,8 @@ impl Blackfynn {
         route: S,
         params: I,
         filepath: T,
+        import_id: &ImportId,
+        progress_callback: C
     ) -> bf::Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
@@ -282,7 +289,7 @@ impl Blackfynn {
         Q: 'static + Send + serde::de::DeserializeOwned,
         T: AsRef<Path>,
     {
-        let chunked_file_payload = ChunkedFilePayload::new(filepath);
+        let chunked_file_payload = ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
         let url = self.get_url();
 
         // Build the request url: config environment base + route:
@@ -435,7 +442,7 @@ impl Blackfynn {
     #[allow(dead_code)]
     fn run<F, T>(&self, runner: F) -> bf::Result<T>
     where
-        F: Fn(Blackfynn) -> bf::Future<T>,
+        F: Fn(Blackfynn<C>) -> bf::Future<T>,
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
@@ -741,6 +748,7 @@ impl Blackfynn {
         organization_id: &OrganizationId,
         import_id: &ImportId,
         filepath: P,
+        progress_callback: C
     ) -> bf::Future<response::UploadResponse>
     where
         P: AsRef<Path>,
@@ -755,6 +763,8 @@ impl Blackfynn {
                 "filename" => filepath.as_ref().file_name().unwrap().to_str().unwrap()
             ),
             filepath,
+            import_id,
+            progress_callback
         )
     }
 }
@@ -803,7 +813,41 @@ mod tests {
         static ref BIG_TEST_DATA_DIR: String = test_data_dir("/big");
     }
 
-    fn bf() -> Blackfynn {
+    struct Inner(sync::Mutex<bool>);
+
+    impl Inner {
+        pub fn new() -> Self {
+            Inner(sync::Mutex::new(false))
+        }
+    }
+
+    struct ProgressIndicator {
+        inner: sync::Arc<Inner>,
+    }
+
+    impl Clone for ProgressIndicator {
+        fn clone(&self) -> Self {
+            Self {
+                inner: Arc::clone(&self.inner),
+            }
+        }
+    }
+
+    impl ProgressIndicator {
+        pub fn new() -> Self {
+            Self {
+                inner: sync::Arc::new(Inner::new()),
+            }
+        }
+    }
+
+    impl ProgressCallback for ProgressIndicator {
+        fn on_update(&self, _update: &ProgressUpdate) {
+            *self.inner.0.lock().unwrap() = true;
+        }
+    }
+
+    fn bf() -> Blackfynn<ProgressIndicator> {
         Blackfynn::new((*CONFIG).clone())
     }
 
@@ -1137,7 +1181,7 @@ mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
+    ) -> Box<Fn(Blackfynn<ProgressIndicator>) -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = test_files.clone();
@@ -1295,40 +1339,6 @@ mod tests {
 
     #[test]
     fn multipart_big_file_uploading() {
-        struct Inner(sync::Mutex<bool>);
-
-        impl Inner {
-            pub fn new() -> Self {
-                Inner(sync::Mutex::new(false))
-            }
-        }
-
-        struct ProgressIndicator {
-            inner: sync::Arc<Inner>,
-        }
-
-        impl Clone for ProgressIndicator {
-            fn clone(&self) -> Self {
-                Self {
-                    inner: Arc::clone(&self.inner),
-                }
-            }
-        }
-
-        impl ProgressIndicator {
-            pub fn new() -> Self {
-                Self {
-                    inner: sync::Arc::new(Inner::new()),
-                }
-            }
-        }
-
-        impl ProgressCallback for ProgressIndicator {
-            fn on_update(&self, _update: &ProgressUpdate) {
-                *self.inner.0.lock().unwrap() = true;
-            }
-        }
-
         let cb = ProgressIndicator::new();
 
         let result = bf().run(move |bf| {
@@ -1449,6 +1459,8 @@ mod tests {
                     let package_files = package.files().clone();
 
                     package_files.into_iter().map(move |package_file| {
+                        let progress_indicator = ProgressIndicator::new();
+
                         let mut filepath = path::Path::new(&TEST_DATA_DIR.to_string()).to_path_buf();
                         filepath.push(package_file.file_name().to_string());
 
@@ -1465,6 +1477,7 @@ mod tests {
                             filepath
                                 .canonicalize()
                                 .unwrap(),
+                            progress_indicator
                         ).map(|_| (bf_clone, dataset_id))
                             .and_then(move |(bf, dataset_id)| {
                                 bf.complete_upload(&import_id_clone, &dataset_id, None, false, true)
