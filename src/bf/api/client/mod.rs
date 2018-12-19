@@ -321,7 +321,7 @@ where C: 'static + ProgressCallback + Clone
                 .body(chunked_file_payload)
                 .unwrap();
 
-            // If a session token exists, use it to set the "X-SESSION-ID"
+            // If a session token exists, use it to set the "Authorization: Bearer"
             // header to make subsequent requests:
             if let Some(session_token) = token {
                 req.headers_mut().insert(

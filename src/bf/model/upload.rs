@@ -515,7 +515,7 @@ mod tests {
         let metadata = File::open(path.clone()).unwrap().metadata().unwrap();
         let result = file_chunks(path, metadata.len(), USE_CHUNK_SIZE);
         match result {
-            Err(err) => println!("file chunking error: {:?}", err),
+            Err(err) => panic!("file chunking error: {:?}", err),
             Ok(_) => {
                 let chunks = result.unwrap();
                 assert!(chunks.len() > 1);
