@@ -13,7 +13,7 @@ pub struct Team {
 }
 
 impl Team {
-    pub fn into_inner(self) -> model::Team {
+    pub fn take(self) -> model::Team {
         self.team
     }
 

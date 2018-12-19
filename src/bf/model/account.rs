@@ -1,5 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+
 /// A Blackfynn platform session token.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct SessionToken(String);
@@ -10,19 +12,19 @@ impl SessionToken {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for SessionToken {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for SessionToken {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for SessionToken {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for SessionToken {
+    fn borrow(&self) -> &str {
         self.0.as_str()
     }
 }

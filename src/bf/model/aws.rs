@@ -1,5 +1,8 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+use std::ops::Deref;
+
 use bf::model;
 
 /// An AWS S3 access key.
@@ -12,20 +15,27 @@ impl AccessKey {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for AccessKey {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for AccessKey {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for AccessKey {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for AccessKey {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for AccessKey {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -57,20 +67,27 @@ impl SecretKey {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for SecretKey {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for SecretKey {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for SecretKey {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for SecretKey {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for SecretKey {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -102,20 +119,27 @@ impl S3Bucket {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for S3Bucket {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for S3Bucket {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for S3Bucket {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for S3Bucket {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for S3Bucket {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -147,7 +171,7 @@ impl S3Key {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 
@@ -159,15 +183,22 @@ impl S3Key {
     }
 }
 
-impl AsRef<String> for S3Key {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for S3Key {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for S3Key {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for S3Key {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for S3Key {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -210,7 +241,7 @@ impl S3UploadKey {
         format!(
             "{email}/{import_id}/{file_name}",
             email = self.email,
-            import_id = AsRef::<String>::as_ref(&self.import_id),
+            import_id = self.import_id,
             file_name = self.file_name
         )
     }
@@ -267,20 +298,27 @@ impl S3EncryptionKeyId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for S3EncryptionKeyId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for S3EncryptionKeyId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for S3EncryptionKeyId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for S3EncryptionKeyId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for S3EncryptionKeyId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -313,20 +351,27 @@ impl S3UploadId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for S3UploadId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for S3UploadId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for S3UploadId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for S3UploadId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for S3UploadId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

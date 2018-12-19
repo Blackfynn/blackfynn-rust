@@ -1,5 +1,10 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+use std::ops::Deref;
+
+use bf::api::{BFId, BFName};
+
 /// An identifier for a team on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TeamId(String);
@@ -11,20 +16,27 @@ impl TeamId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for TeamId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for TeamId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for TeamId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for TeamId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for TeamId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -63,5 +75,18 @@ impl Team {
 
     pub fn name(&self) -> &String {
         &self.name
+    }
+}
+
+impl BFId for Team {
+    type Id = TeamId;
+    fn id(&self) -> &Self::Id {
+        self.id()
+    }
+}
+
+impl BFName for Team {
+    fn name(&self) -> &String {
+        self.name()
     }
 }

@@ -1,5 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+
 use bf::model;
 
 /// A response wrapping a timeseries `model::Channel`.
@@ -10,13 +12,13 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn into_inner(self) -> model::Channel {
+    pub fn take(self) -> model::Channel {
         self.content
     }
 }
 
-impl AsRef<model::Channel> for Channel {
-    fn as_ref(&self) -> &model::Channel {
+impl Borrow<model::Channel> for Channel {
+    fn borrow(&self) -> &model::Channel {
         &self.content
     }
 }

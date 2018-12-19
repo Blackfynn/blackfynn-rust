@@ -1,5 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use bf::api::BFName;
+
 /// The representation type of a `model::File`.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,12 +25,13 @@ pub struct File {
     updated_at: String,
 }
 
-impl File {
-    #[allow(dead_code)]
-    pub fn name(&self) -> &String {
+impl BFName for File {
+    fn name(&self) -> &String {
         &self.name
     }
+}
 
+impl File {
     #[allow(dead_code)]
     pub fn file_type(&self) -> &String {
         &self.file_type

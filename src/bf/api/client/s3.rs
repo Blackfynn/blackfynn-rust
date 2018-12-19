@@ -23,7 +23,7 @@ use bf::model::{
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
-use super::progress::{ProgressCallback, ProgressUpdate, NoProgress};
+use super::progress::{NoProgress, ProgressCallback, ProgressUpdate};
 
 const KB: u64 = 1024;
 const MB: u64 = KB * KB;
@@ -97,6 +97,7 @@ impl<C> MultipartUploadFile<C>
 where
     C: 'static + ProgressCallback + Clone,
 {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         s3_client: &Arc<S3Client>,
         file: S3File,
@@ -273,7 +274,8 @@ where
                     });
 
                     into_future_trait(f)
-                }).buffer_unordered(concurrent_limit);
+                })
+                .buffer_unordered(concurrent_limit);
 
             into_stream_trait(f)
         } else {
@@ -410,6 +412,7 @@ pub struct S3Uploader {
 }
 
 impl S3Uploader {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         server_side_encryption: S3ServerSideEncryption,
         access_key: AccessKey,
@@ -483,10 +486,12 @@ impl S3Uploader {
                 import_id.clone(),
                 credentials.clone(),
                 cb.clone(),
-            ).map(move |result| match result {
+            )
+            .map(move |result| match result {
                 MultipartUploadResult::Complete(import_id, _) => stream::once(Ok(import_id)),
                 MultipartUploadResult::Abort(reason, _) => stream::once(Err(reason)),
-            }).flatten()
+            })
+            .flatten()
             .chain(
                 self.put_objects_cb(path, &small_s3_files, import_id, credentials, cb)
                     .into_stream(),
@@ -537,14 +542,10 @@ impl S3Uploader {
                 s3_client
                     .put_object(request)
                     .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:put object"))
-            }).and_then(move |_| {
-                let update = ProgressUpdate::new(
-                    1,
-                    import_id.clone(),
-                    file_path,
-                    file_size,
-                    file_size,
-                );
+            })
+            .and_then(move |_| {
+                let update =
+                    ProgressUpdate::new(1, import_id.clone(), file_path, file_size, file_size);
                 cb.on_update(&update);
                 Ok(import_id)
             });
@@ -647,7 +648,8 @@ impl S3Uploader {
                     tx_progress,
                     cb,
                 ))
-            }).map_err(|e| bf::Error::with_chain(e, "bf:api:s3:begin multipart upload"));
+            })
+            .map_err(|e| bf::Error::with_chain(e, "bf:api:s3:begin multipart upload"));
 
         into_future_trait(f)
     }

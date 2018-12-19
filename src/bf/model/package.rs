@@ -1,9 +1,14 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model;
+use std::borrow::Borrow;
+use std::fmt;
+use std::ops::Deref;
+
 use chrono::{DateTime, Utc};
 use serde::{de, Deserialize, Deserializer};
-use std::fmt;
+
+use bf::api::{BFId, BFName};
+use bf::model;
 
 /// An identifier for a package on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -16,20 +21,27 @@ impl PackageId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for PackageId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for PackageId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for PackageId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for PackageId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for PackageId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -151,13 +163,24 @@ pub struct Package {
     updated_at: DateTime<Utc>,
 }
 
+impl BFId for Package {
+    type Id = PackageId;
+    fn id(&self) -> &Self::Id {
+        self.id()
+    }
+}
+
+impl BFName for Package {
+    fn name(&self) -> &String {
+        self.name()
+    }
+}
+
 impl Package {
-    #[allow(dead_code)]
-    pub fn id(&self) -> &model::PackageId {
+    pub fn id(&self) -> &PackageId {
         &self.id
     }
 
-    #[allow(dead_code)]
     pub fn name(&self) -> &String {
         &self.name
     }

@@ -1,7 +1,11 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model;
+use std::borrow::Borrow;
 use std::fmt;
+use std::ops::Deref;
+
+use bf::api::{BFId, BFName};
+use bf::model;
 
 /// An identifier for an organization on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -14,20 +18,27 @@ impl OrganizationId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for OrganizationId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for OrganizationId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for OrganizationId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for OrganizationId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for OrganizationId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -73,13 +84,24 @@ pub struct Organization {
     encryption_key_id: model::S3EncryptionKeyId,
 }
 
+impl BFId for Organization {
+    type Id = OrganizationId;
+    fn id(&self) -> &Self::Id {
+        self.id()
+    }
+}
+
+impl BFName for Organization {
+    fn name(&self) -> &String {
+        &self.name
+    }
+}
+
 impl Organization {
-    #[allow(dead_code)]
     pub fn id(&self) -> &OrganizationId {
         &self.id
     }
 
-    #[allow(dead_code)]
     pub fn name(&self) -> &String {
         &self.name
     }
