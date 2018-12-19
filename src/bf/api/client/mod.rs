@@ -2,18 +2,16 @@
 
 //! Functions to interact with the Blackfynn platform.
 
-pub mod s3;
 pub mod progress;
+pub mod s3;
 
-pub use self::s3::{
-    MultipartUploadResult, S3Uploader, UploadProgress,
-    UploadProgressIter,
-};
+pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProgressIter};
 
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::env;
-use std::path::Path;
+use std::iter;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::*;
@@ -34,7 +32,7 @@ use bf::config::{Config, Environment};
 use bf::model::{
     self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };
-use bf::util::futures::into_future_trait;
+use bf::util::futures::{ into_future_trait, into_stream_trait };
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
@@ -281,7 +279,7 @@ where C: 'static + ProgressCallback
         params: I,
         filepath: T,
         import_id: &ImportId,
-        progress_callback: C
+        progress_callback: Arc<Mutex<C>>
     ) -> bf::Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
@@ -724,7 +722,7 @@ where C: 'static + ProgressCallback
         dataset_id: &DatasetId,
         destination_id: Option<&PackageId>,
         append: bool,
-        use_upload_service: bool
+        use_upload_service: bool,
     ) -> bf::Future<response::Manifests> {
         let mut params = params!(
             "uploadService" => if use_upload_service { "true" } else { "false" },
@@ -743,29 +741,54 @@ where C: 'static + ProgressCallback
     }
 
     /// Upload a file using the upload service.
-    pub fn upload<P>(
+    pub fn upload_files<P>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
-        filepath: P,
-        progress_callback: C
-    ) -> bf::Future<response::UploadResponse>
+        path: P,
+        files: &Vec<model::S3File>,
+        progress_callback: Arc<Mutex<C>>
+    ) -> bf::Stream<ImportId>
     where
-        P: AsRef<Path>,
+        P: 'static + AsRef<Path>,
     {
-        self.request_chunked(
-            route!(
-                "/upload/organizations/{organization_id}/id/{import_id}",
-                organization_id,
-                import_id
-            ),
-            params!(
-                "filename" => filepath.as_ref().file_name().unwrap().to_str().unwrap()
-            ),
-            filepath,
-            import_id,
-            progress_callback
-        )
+        let fs = files
+            .iter()
+            .zip(iter::repeat(path.as_ref().to_path_buf()))
+            .map(move |(file, path): (&model::S3File, PathBuf)| {
+                let import_id_clone = import_id.clone();
+                let mut file_path = path.clone();
+
+                file_path.push(file.file_name());
+
+                self.request_chunked(
+                    route!(
+                        "/upload/organizations/{organization_id}/id/{import_id}",
+                        organization_id,
+                        import_id
+                    ),
+                    params!(
+                        "filename" => file.file_name().to_string()
+                    ),
+                    file_path,
+                    &import_id,
+                    Arc::clone(&progress_callback)
+                ).and_then(move |response: response::UploadResponse| {
+                    if response.success {
+                        future::ok(import_id_clone)
+                    } else {
+                        future::err(
+                            bf::error::ErrorKind::UploadError(
+                                response
+                                    .error
+                                    .unwrap_or_else(|| String::from("No error message supplied.")),
+                            ).into(),
+                        )
+                    }
+                })
+            });
+
+        into_stream_trait(stream::futures_unordered(fs))
     }
 }
 
@@ -1300,7 +1323,13 @@ mod tests {
                         )).flatten()
                         .filter_map(move |result| match result {
                             MultipartUploadResult::Complete(import_id, _) => {
-                                Some(bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false))
+                                Some(bf.complete_upload(
+                                    &import_id,
+                                    &dataset_id.clone(),
+                                    None,
+                                    false,
+                                    false,
+                                ))
                             }
                             _ => None,
                         }).collect()
@@ -1442,60 +1471,58 @@ mod tests {
     fn upload_using_upload_service() {
         // create upload
         let result = bf().run(move |bf| {
-            let f = create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(
-                bf,
-            ).and_then(move |(scaffold, bf)| bf.get_user().map(|user| (user, scaffold, bf)))
-            .and_then(move |(user, scaffold, bf)| {
-                let org = user.preferred_organization().clone().unwrap();
-                let bf_clone = bf.clone();
-                let dataset_id = scaffold.dataset_id.clone();
-                let dataset_id_clone = scaffold.dataset_id.clone();
-
-                stream::futures_unordered(scaffold.preview.into_iter().flat_map(move |package| {
-                    let import_id = package.import_id().clone();
-                    let bf = bf.clone();
-                    let dataset_id = dataset_id.clone();
-                    let package = package.clone();
-                    let package_files = package.files().clone();
-
-                    package_files.into_iter().map(move |package_file| {
-                        let progress_indicator = ProgressIndicator::new();
-
-                        let mut filepath = path::Path::new(&TEST_DATA_DIR.to_string()).to_path_buf();
-                        filepath.push(package_file.file_name().to_string());
-
+            let f =
+                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+                    .and_then(move |(scaffold, bf)| bf.get_user().map(|user| (user, scaffold, bf)))
+                    .and_then(move |(user, scaffold, bf)| {
+                        let org = user.preferred_organization().unwrap().clone();
                         let bf = bf.clone();
                         let bf_clone = bf.clone();
-                        let dataset_id = dataset_id.clone();
-                        let org = org.clone();
-                        let import_id = import_id.clone();
-                        let import_id_clone = import_id.clone();
+                        let dataset_id = scaffold.dataset_id.clone();
+                        let dataset_id_clone = scaffold.dataset_id.clone();
 
-                        bf.upload(
-                            &org,
-                            &import_id_clone,
-                            filepath
+                        let upload_futures = scaffold.preview.into_iter().map(move |package| {
+                            let import_id = package.import_id().clone();
+                            let bf = bf.clone();
+                            let bf_clone = bf.clone();
+                            let dataset_id = dataset_id.clone();
+                            let package = package.clone();
+
+                            let file_path = path::Path::new(&TEST_DATA_DIR.to_string())
+                                .to_path_buf()
                                 .canonicalize()
-                                .unwrap(),
-                            progress_indicator
-                        ).map(|_| (bf_clone, dataset_id))
+                                .unwrap();
+
+                            let progress_indicator = Arc::new(Mutex::new(ProgressIndicator::new()));
+
+                            bf.upload_files(
+                                &org,
+                                &import_id,
+                                file_path,
+                                package.files(),
+                                progress_indicator,
+                            ).collect()
+                            .map(|_| (bf_clone, dataset_id))
                             .and_then(move |(bf, dataset_id)| {
-                                bf.complete_upload(&import_id_clone, &dataset_id, None, false, true)
+                                bf.complete_upload(&import_id, &dataset_id, None, false, true)
                             })
+                        });
+
+                        futures::future::join_all(upload_futures)
+                            .map(|_| (bf_clone, dataset_id_clone))
                     })
-                })).collect()
-                .map(|_| (bf_clone, dataset_id_clone))
-            }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
 
         // check result
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            // println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
         }
 
         // TODO: check that upload exists in the platform
     }
+
 }

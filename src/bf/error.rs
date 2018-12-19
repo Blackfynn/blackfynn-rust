@@ -39,6 +39,10 @@ error_chain! {
             description("API error")
             display("API error :: {} {}", status_code, message)
         }
+        UploadError(message: String) {
+            description("Upload error")
+            display("Upload error :: {}", message)
+        }
         EnvParseError(s: String) {
             description("API: Invalid environment string")
             display("API: Invalid environment string :: {}", s)

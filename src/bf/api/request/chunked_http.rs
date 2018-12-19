@@ -5,6 +5,7 @@ use hyper::body::Payload;
 
 use futures::Async;
 
+use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::io::{Error, Read};
 use std::path::{Path, PathBuf};
@@ -20,11 +21,11 @@ pub struct ChunkedFilePayload<C: ProgressCallback> {
     bytes_sent: u64,
     file_size: u64,
     parts_sent: usize,
-    progress_callback: C,
+    progress_callback: Arc<Mutex<C>>,
 }
 
 impl<C: ProgressCallback> ChunkedFilePayload<C> {
-    pub fn new<P>(import_id: ImportId, file_path: P, progress_callback: C) -> Self
+    pub fn new<P>(import_id: ImportId, file_path: P, progress_callback: Arc<Mutex<C>>) -> Self
     where
         P: AsRef<Path>,
     {
@@ -42,7 +43,7 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
         import_id: ImportId,
         file_path: P,
         chunk_size_bytes: usize,
-        progress_callback: C,
+        progress_callback: Arc<Mutex<C>>,
     ) -> Self
     where
         P: AsRef<Path>,
@@ -89,7 +90,7 @@ where C: 'static + ProgressCallback
                     self.bytes_sent,
                     self.file_size,
                 );
-                self.progress_callback.on_update(&progress_update);
+                self.progress_callback.lock().unwrap().on_update(&progress_update);
 
                 buffer.truncate(bytes_read);
                 Async::Ready(Some(hyper::Chunk::from(buffer)))
