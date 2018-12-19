@@ -497,7 +497,7 @@ mod tests {
     use super::*;
     use std::fs::File;
 
-    const USE_CHUNK_SIZE: u64 = 10;
+    const USE_CHUNK_SIZE: u64 = 100;
 
     #[test]
     pub fn empty_file_chunking_works() {
