@@ -37,7 +37,8 @@ use bf::util::futures::{ into_future_trait, into_stream_trait };
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
 
-struct BlackFynnImpl<C: ProgressCallback> {
+struct BlackFynnImpl<C>
+where C: ProgressCallback + Clone {
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
     chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>,
@@ -46,13 +47,15 @@ struct BlackFynnImpl<C: ProgressCallback> {
 }
 
 /// The Blackfynn client.
-pub struct Blackfynn<C: ProgressCallback> {
+pub struct Blackfynn<C>
+where C: ProgressCallback + Clone {
     // See https://users.rust-lang.org/t/best-pattern-for-async-update-of-self-object/15205
     // for notes on this pattern:
     inner: Arc<Mutex<BlackFynnImpl<C>>>,
 }
 
-impl<C: ProgressCallback> Clone for Blackfynn<C> {
+impl<C> Clone for Blackfynn<C>
+where C: ProgressCallback + Clone {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -156,7 +159,7 @@ macro_rules! delete {
 // ============================================================================s
 
 impl<C> Blackfynn<C>
-where C: 'static + ProgressCallback
+where C: 'static + ProgressCallback + Clone
 {
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
@@ -279,7 +282,7 @@ where C: 'static + ProgressCallback
         params: I,
         filepath: T,
         import_id: &ImportId,
-        progress_callback: Arc<Mutex<C>>
+        progress_callback: C
     ) -> bf::Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
@@ -747,7 +750,7 @@ where C: 'static + ProgressCallback
         import_id: &ImportId,
         path: P,
         files: &Vec<model::S3File>,
-        progress_callback: Arc<Mutex<C>>
+        progress_callback: C
     ) -> bf::Stream<ImportId>
     where
         P: 'static + AsRef<Path>,
@@ -772,7 +775,7 @@ where C: 'static + ProgressCallback
                     ),
                     file_path,
                     &import_id,
-                    Arc::clone(&progress_callback)
+                    progress_callback.clone()
                 ).and_then(move |response: response::UploadResponse| {
                     if response.success {
                         future::ok(import_id_clone)
@@ -1493,7 +1496,7 @@ mod tests {
                                 .canonicalize()
                                 .unwrap();
 
-                            let progress_indicator = Arc::new(Mutex::new(ProgressIndicator::new()));
+                            let progress_indicator = ProgressIndicator::new();
 
                             bf.upload_files(
                                 &org,
