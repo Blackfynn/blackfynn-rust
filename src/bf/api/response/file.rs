@@ -10,14 +10,8 @@ pub struct File {
 }
 
 impl File {
-    pub fn into_inner(self) -> model::File {
+    pub fn take(self) -> model::File {
         self.content
-    }
-}
-
-impl AsRef<model::File> for File {
-    fn as_ref(&self) -> &model::File {
-        &self.content
     }
 }
 
@@ -26,7 +20,7 @@ impl AsRef<model::File> for File {
 pub struct Files(Vec<File>);
 
 impl Files {
-    pub fn into_inner(self) -> Vec<model::File> {
-        self.0.into_iter().map(|file| file.into_inner()).collect()
+    pub fn take(self) -> Vec<model::File> {
+        self.0.into_iter().map(|file| file.take()).collect()
     }
 }

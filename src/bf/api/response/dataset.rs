@@ -1,8 +1,12 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::api::response::package::Package;
-use bf::model;
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::ops::Deref;
+
+use bf::api::response::package::Package;
+use bf::api::BFChildren;
+use bf::model;
 
 /// A response wrapping a `model::Dataset`, along with and related metadata.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -14,30 +18,56 @@ pub struct Dataset {
     content: model::Dataset,
 }
 
+impl BFChildren for Dataset {
+    type Child = Package;
+    fn children(&self) -> Option<&Vec<Self::Child>> {
+        self.children.as_ref()
+    }
+}
+
+impl Borrow<model::Dataset> for Dataset {
+    fn borrow(&self) -> &model::Dataset {
+        &self.content
+    }
+}
+
+impl Deref for Dataset {
+    type Target = model::Dataset;
+    fn deref(&self) -> &Self::Target {
+        &self.content
+    }
+}
+
 impl Dataset {
-    /// Get the associated organization.
+    /// Get the organization associated with this dataset.
     pub fn organization(&self) -> &String {
         &self.organization
     }
 
-    /// Get the owner.
+    /// Get the owner of the dataset.
     pub fn owner(&self) -> &String {
         &self.owner
     }
 
+    // Get the child packages contained in this dataset.
     pub fn children(&self) -> Option<&Vec<Package>> {
         self.children.as_ref()
     }
 
-    /// Unwrap the response into the contained model object.
-    pub fn into_inner(self) -> model::Dataset {
+    /// Take ownership of the dataset wrapped by this response object.
+    pub fn take(self) -> model::Dataset {
         self.content
     }
-}
 
-impl AsRef<model::Dataset> for Dataset {
-    fn as_ref(&self) -> &model::Dataset {
-        &self.content
+    /// Fetch a package from a dataset by package ID.
+    pub fn get_package_by_id(&self, package_id: model::PackageId) -> Option<model::Package> {
+        self.get_child_by_id(package_id).map(|p| p.clone().take())
+    }
+
+    /// Fetch a package from a dataset by package name.
+    pub fn get_package_by_name<N: Into<String>>(&self, package_name: N) -> Option<model::Package> {
+        self.get_child_by_name(package_name)
+            .map(|p| p.clone().take())
     }
 }
 

@@ -14,7 +14,7 @@ pub struct UploadPreview {
 
 impl UploadPreview {
     /// Unwraps the value.
-    pub fn into_inner(self) -> Vec<model::PackagePreview> {
+    pub fn take(self) -> Vec<model::PackagePreview> {
         self.packages
     }
 
@@ -50,7 +50,7 @@ pub struct Manifests(Vec<model::ManifestEntry>);
 
 impl Manifests {
     /// Unwraps the value.
-    pub fn into_inner(self) -> Vec<model::ManifestEntry> {
+    pub fn take(self) -> Vec<model::ManifestEntry> {
         self.0
     }
 
@@ -77,5 +77,5 @@ impl IntoIterator for Manifests {
 #[serde(rename_all = "camelCase")]
 pub struct UploadResponse {
     pub success: bool,
-    pub error: Option<String>
+    pub error: Option<String>,
 }

@@ -1,5 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -22,19 +23,19 @@ impl ImportId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for ImportId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for ImportId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for ImportId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for ImportId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
     }
 }
@@ -78,13 +79,13 @@ impl UploadId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> u64 {
+    pub fn take(self) -> u64 {
         self.0
     }
 }
 
-impl AsRef<u64> for UploadId {
-    fn as_ref(&self) -> &u64 {
+impl Borrow<u64> for UploadId {
+    fn borrow(&self) -> &u64 {
         &self.0
     }
 }
@@ -110,14 +111,15 @@ pub struct S3FileChunk {
 }
 
 impl S3FileChunk {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<P: AsRef<Path>>(
         path: P,
         file_size: u64,
         chunk_size: u64,
         index: u64,
-    ) -> bf::Result<S3FileChunk> {
+    ) -> bf::Result<Self> {
         let handle = fs::File::open(path)?;
-        Ok(S3FileChunk {
+        Ok(Self {
             handle,
             file_size,
             chunk_size,
@@ -170,7 +172,8 @@ fn file_chunks<P: AsRef<Path>>(
     (0..nchunks)
         .map(move |part_number| {
             S3FileChunk::new(from_path.as_ref(), file_size, chunk_size, part_number)
-        }).collect()
+        })
+        .collect()
 }
 
 impl S3File {
@@ -189,13 +192,15 @@ impl S3File {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Not a file: {:?}", file_path),
-            )).into());
+            ))
+            .into());
         };
         if !file_path.exists() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Could not read: {:?}", file_path),
-            )).into());
+            ))
+            .into());
         };
 
         // Get the full file path as a String:
@@ -214,6 +219,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<P: AsRef<Path>, Q: AsRef<Path>>(
         path: P,
         file: Q,

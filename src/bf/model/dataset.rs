@@ -1,5 +1,9 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+use std::ops::Deref;
+
+use bf::api::{BFId, BFName};
 use bf::model;
 use chrono::{DateTime, Utc};
 use std::fmt;
@@ -15,20 +19,27 @@ impl DatasetId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for DatasetId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for DatasetId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for DatasetId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for DatasetId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl Deref for DatasetId {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -76,13 +87,24 @@ pub struct Dataset {
     updated_at: DateTime<Utc>,
 }
 
+impl BFId for Dataset {
+    type Id = DatasetId;
+    fn id(&self) -> &Self::Id {
+        self.id()
+    }
+}
+
+impl BFName for Dataset {
+    fn name(&self) -> &String {
+        self.name()
+    }
+}
+
 impl Dataset {
-    #[allow(dead_code)]
     pub fn id(&self) -> &DatasetId {
         &self.id
     }
 
-    #[allow(dead_code)]
     pub fn name(&self) -> &String {
         &self.name
     }

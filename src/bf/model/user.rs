@@ -1,5 +1,8 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use std::borrow::Borrow;
+
+use bf::api::BFId;
 use bf::model;
 
 /// An identifier for a user on the Blackfynn platform.
@@ -13,19 +16,19 @@ impl UserId {
     }
 
     /// Unwraps the value.
-    pub fn into_inner(self) -> String {
+    pub fn take(self) -> String {
         self.0
     }
 }
 
-impl AsRef<String> for UserId {
-    fn as_ref(&self) -> &String {
+impl Borrow<String> for UserId {
+    fn borrow(&self) -> &String {
         &self.0
     }
 }
 
-impl AsRef<str> for UserId {
-    fn as_ref(&self) -> &str {
+impl Borrow<str> for UserId {
+    fn borrow(&self) -> &str {
         self.0.as_str()
     }
 }
@@ -65,6 +68,13 @@ pub struct User {
     last_name: String,
     email: String,
     preferred_organization: Option<model::OrganizationId>,
+}
+
+impl BFId for User {
+    type Id = UserId;
+    fn id(&self) -> &Self::Id {
+        self.id()
+    }
 }
 
 impl User {

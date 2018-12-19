@@ -9,6 +9,7 @@ pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProg
 
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
+use std::borrow::Borrow;
 use std::env;
 use std::iter;
 use std::path::{Path, PathBuf};
@@ -212,7 +213,6 @@ where
         S: Into<String>,
     {
         let url = self.get_url();
-        let method_clone = method.clone();
 
         // Build the request url: config environment base + route:
         let mut use_url = url.clone();
@@ -240,14 +240,15 @@ where
                 serde_json::to_string(p)
                     .map(Into::into)
                     .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
-            }).unwrap_or_else(|| Ok(hyper::Body::empty()))
+            })
+            .unwrap_or_else(|| Ok(hyper::Body::empty()))
             .map_err(Into::into)
             .into_future()
             .join(uri)
             .and_then(move |(body, uri)| {
                 let mut req = hyper::Request::builder()
                     .method(method.clone())
-                    .uri(uri)
+                    .uri(uri.clone())
                     .body(body)
                     .unwrap();
 
@@ -256,7 +257,7 @@ where
                 if let Some(session_token) = token {
                     req.headers_mut().insert(
                         X_SESSION_ID,
-                        hyper::header::HeaderValue::from_str(session_token.as_ref()).unwrap(),
+                        hyper::header::HeaderValue::from_str(session_token.borrow()).unwrap(),
                     );
                 }
 
@@ -266,19 +267,26 @@ where
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 );
 
+                let error_method = method.to_string();
+                let error_url = uri.to_string();
+
                 // Make the actual request:
-                client.request(req).map_err(move |e| {
-                    bf::Error::with_chain(
-                        e,
-                        format!(
-                            "bf:request<{method}:{url}>:execute",
-                            method = method.to_string(),
-                            url = use_url.to_string()
-                        ),
-                    )
-                })
-            }).and_then(move |resp| {
-                Self::process_response(resp, method_clone.to_string(), url.to_string())
+                client
+                    .request(req)
+                    .map_err(move |e| {
+                        bf::Error::with_chain(
+                            e,
+                            format!(
+                                "bf:request<{method}:{url}>:execute",
+                                method = error_method,
+                                url = error_url
+                            ),
+                        )
+                    })
+                    .map(|resp| (resp, method, uri))
+            })
+            .and_then(move |(resp, method, uri)| {
+                Self::process_response(resp, method.to_string(), uri.to_string())
             });
 
         into_future_trait(f)
@@ -327,7 +335,7 @@ where
             .and_then(move |uri| {
                 let mut req = hyper::Request::builder()
                     .method(hyper::Method::POST)
-                    .uri(uri)
+                    .uri(uri.clone())
                     .body(chunked_file_payload)
                     .unwrap();
 
@@ -338,43 +346,46 @@ where
                         hyper::header::AUTHORIZATION,
                         hyper::header::HeaderValue::from_str(&format!(
                             "Bearer {}",
-                            session_token.into_inner()
-                        )).unwrap(),
+                            session_token.take()
+                        ))
+                        .unwrap(),
                     );
                 }
 
+                let error_url = uri.to_string();
+
                 // Make the actual request:
-                client.request(req).map_err(move |e| {
-                    bf::Error::with_chain(
-                        e,
-                        format!(
-                            "bf:request<{method}:{url}>:execute",
-                            method = hyper::Method::POST,
-                            url = use_url.to_string()
-                        ),
-                    )
-                })
-            }).and_then(move |resp| {
-                Self::process_response(resp, hyper::Method::POST.to_string(), url.to_string())
+                client
+                    .request(req)
+                    .map_err(move |e| {
+                        bf::Error::with_chain(
+                            e,
+                            format!(
+                                "bf:request:{method}:[{url}]:execute",
+                                method = hyper::Method::POST,
+                                url = error_url
+                            ),
+                        )
+                    })
+                    .map(|resp| (resp, uri))
+            })
+            .and_then(move |(resp, uri)| {
+                Self::process_response(resp, hyper::Method::POST.to_string(), uri.to_string())
             });
 
         into_future_trait(f)
     }
 
-    fn process_response<Q, S, T>(
+    fn process_response<T>(
         response: hyper::Response<hyper::Body>,
-        method_string: S,
-        url_string: T,
-    ) -> bf::Future<Q>
+        method_string: String,
+        url_string: String,
+    ) -> bf::Future<T>
     where
-        Q: 'static + Send + serde::de::DeserializeOwned,
-        S: Into<String>,
-        T: Into<String>,
+        T: 'static + Send + serde::de::DeserializeOwned,
     {
-        let method_string: String = method_string.into();
-        let url_string: String = url_string.into();
-        let method_string_clone = method_string.clone();
-        let url_string_clone = url_string.clone();
+        let error_method = method_string.clone();
+        let error_url = url_string.clone();
 
         // Check the status code. And 5XX code will result in the
         // future terminating with an error containing the message
@@ -387,12 +398,13 @@ where
                 bf::Error::with_chain(
                     e,
                     format!(
-                        "bf:request<{method}:{url}>:response",
+                        "bf:request:{method}:[{url}]:response",
                         method = method_string,
                         url = url_string
                     ),
                 )
-            }).and_then(move |body: hyper::Chunk| Ok((status_code, body)))
+            })
+            .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
             .and_then(
                 move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
                     if status_code.is_client_error() || status_code.is_server_error() {
@@ -400,20 +412,22 @@ where
                             bf::error::ErrorKind::ApiError(
                                 status_code,
                                 String::from_utf8_lossy(&body).to_string(),
-                            ).into(),
+                            )
+                            .into(),
                         );
                     }
                     future::ok(body)
                 },
-            ).and_then(|body: hyper::Chunk| {
+            )
+            .and_then(|body: hyper::Chunk| {
                 // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
                 // and equal to `DEBUG`, dump the request contents to stderr:
                 if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
                     if log_level == "DEBUG" {
                         eprintln!(
-                            "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
-                            method = method_string_clone,
-                            url = url_string_clone,
+                            "[DEBUG] bf:request:{method}:[{url}]:serialize:payload ~ {payload}",
+                            method = error_method,
+                            url = error_url,
                             payload = Self::chunk_to_string(&body)
                         );
                     }
@@ -423,9 +437,9 @@ where
                     bf::Error::with_chain(
                         e,
                         format!(
-                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                            method = method_string_clone,
-                            url = url_string_clone,
+                            "bf:request:{method}:[{url}]:serialize:payload ~ {payload}",
+                            method = error_method,
+                            url = error_url,
                             payload = Self::chunk_to_string(&body)
                         ),
                     )
@@ -553,9 +567,31 @@ where
         post!(self, "/datasets/", params!(), payload!(payload))
     }
 
-    /// Get a specific dataset.
+    /// Get a specific dataset by its ID.
     pub fn get_dataset_by_id(&self, id: DatasetId) -> bf::Future<response::Dataset> {
         get!(self, route!("/datasets/{id}", id))
+    }
+
+    /// Get a specific dataset by its name.
+    pub fn get_dataset_by_name<N: Into<String>>(&self, name: N) -> bf::Future<response::Dataset> {
+        let name = name.into();
+        let inner = self.clone();
+        into_future_trait(self.get_datasets().and_then(move |datasets| {
+            datasets
+                .into_iter()
+                .find(|ds| {
+                    let ds: &model::Dataset = ds.borrow();
+                    ds.name().to_lowercase() == name.to_lowercase()
+                })
+                .ok_or_else(|| format!("couldn't find dataset \"{}\"", name).into())
+                .into_future()
+                .and_then(move |ds| {
+                    // NOTE: We must re-request the found dataset, as any dataset
+                    // returned by way of the `/datasets/` route will not include
+                    // child packages:
+                    inner.get_dataset_by_id(ds.id().clone())
+                })
+        }))
     }
 
     /// Get the collaborators of the data set.
@@ -699,7 +735,8 @@ where
             .enumerate()
             .map(|(id, file)| {
                 model::S3File::new(path.as_ref(), file.as_ref(), Some(Into::into(id as u64)))
-            }).collect::<Result<Vec<_>, _>>();
+            })
+            .collect::<Result<Vec<_>, _>>();
 
         let s3_files = match results {
             Ok(good) => good,
@@ -788,7 +825,8 @@ where
                     file_path,
                     &import_id,
                     progress_callback.clone(),
-                ).and_then(move |response: response::UploadResponse| {
+                )
+                .and_then(move |response: response::UploadResponse| {
                     if response.success {
                         future::ok(import_id_clone)
                     } else {
@@ -797,7 +835,8 @@ where
                                 response
                                     .error
                                     .unwrap_or_else(|| String::from("No error message supplied.")),
-                            ).into(),
+                            )
+                            .into(),
                         )
                     }
                 })
@@ -815,6 +854,7 @@ mod tests {
     use std::{cell, fs, path, sync, thread, time};
 
     use bf::api::client::s3::MultipartUploadResult;
+    // use bf::api::{BFChildren, BFId, BFName};
     use bf::config::Environment;
     use bf::util::futures::into_future_trait;
     use bf::util::rand_suffix;
@@ -837,11 +877,13 @@ mod tests {
     #[allow(dead_code)]
     const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
-    // "Blackfynn" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
+    // "AGENT-DATASET-DO-NOT-DELETE" (dev)
+    const FIXTURE_DATASET: &'static str = "N:dataset:23f181ea-f605-430e-a192-7a244ccd838e";
+    const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
 
-    // "Raw device readings" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
+    // "AGENT-TEST-PACKAGE" (dev)
+    const FIXTURE_PACKAGE: &'static str = "N:collection:48834c95-c66f-42d0-8c60-c51748b35120";
+    const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
@@ -962,7 +1004,8 @@ mod tests {
                     .and_then(move |(user, bf)| {
                         let org = user.preferred_organization().clone();
                         bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_user()),
+                    })
+                    .and_then(move |bf| bf.get_user()),
             )
         });
 
@@ -1031,6 +1074,118 @@ mod tests {
     }
 
     #[test]
+    fn fetching_dataset_by_name_successful_if_logged_in_and_exists() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+    }
+
+    #[test]
+    fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_id() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_id(FIXTURE_DATASET.into())),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+
+        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+    }
+
+    #[test]
+    fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_id() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_id(FIXTURE_DATASET.into())),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+
+        assert!(ds
+            .unwrap()
+            .get_package_by_name(FIXTURE_PACKAGE_NAME)
+            .is_some());
+    }
+
+    #[test]
+    fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_name() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+
+        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+    }
+
+    #[test]
+    fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_name() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+
+        assert!(ds
+            .unwrap()
+            .get_package_by_name(FIXTURE_PACKAGE_NAME)
+            .is_some());
+    }
+
+    #[test]
+    fn fetching_child_dataset_fails_if_it_does_not_exists() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+
+        assert!(ds.unwrap().get_package_by_name("doesnotexist").is_none());
+    }
+
+    #[test]
+    fn fetching_dataset_by_name_fails_if_it_does_not_exist() {
+        let ds = bf().run(move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset_by_name("doesnotexist")),
+            )
+        });
+
+        assert!(ds.is_err());
+    }
+
+    #[test]
     fn fetching_package_by_id_successful_if_logged_in_and_exists() {
         let package = bf().run(move |bf| {
             into_future_trait(
@@ -1084,7 +1239,8 @@ mod tests {
                     .and_then(move |(user, bf)| {
                         let org = user.preferred_organization().clone();
                         bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_members()),
+                    })
+                    .and_then(move |bf| bf.get_members()),
             )
         });
         assert!(members.is_ok());
@@ -1099,7 +1255,8 @@ mod tests {
                     .and_then(move |(user, bf)| {
                         let org = user.preferred_organization().clone();
                         bf.set_preferred_organization(org.cloned()).map(|_| bf)
-                    }).and_then(move |bf| bf.get_teams()),
+                    })
+                    .and_then(move |bf| bf.get_teams()),
             )
         });
         assert!(teams.is_ok());
@@ -1114,8 +1271,10 @@ mod tests {
                         bf.create_dataset(request::dataset::Create::new(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        )).map(|ds| (bf, ds))
-                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+                        ))
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, id)| {
                         bf.update_dataset(
                             id.clone(),
@@ -1123,18 +1282,22 @@ mod tests {
                                 "new-dataset-name",
                                 None as Option<String>,
                             ),
-                        ).map(|_| (bf, id))
-                    }).and_then(move |(bf, id)| {
+                        )
+                        .map(|_| (bf, id))
+                    })
+                    .and_then(move |(bf, id)| {
                         let id = id.clone();
                         bf.get_dataset_by_id(id.clone())
                             .and_then(|ds| {
                                 assert_eq!(
-                                    ds.into_inner().name().clone(),
+                                    ds.take().name().clone(),
                                     "new-dataset-name".to_string()
                                 );
                                 Ok(id)
-                            }).map(|id| (bf, id))
-                    }).and_then(move |(bf, id)| bf.delete_dataset(id)),
+                            })
+                            .map(|id| (bf, id))
+                    })
+                    .and_then(move |(bf, id)| bf.delete_dataset(id)),
             )
         });
 
@@ -1152,29 +1315,33 @@ mod tests {
                         bf.create_dataset(request::dataset::Create::new(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        )).map(|ds| (bf, ds))
-                    }).and_then(move |(bf, ds)| Ok(ds.as_ref().id().clone()).map(|id| (bf, id)))
+                        ))
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, ds_id)| {
                         bf.create_package(request::package::Create::new(
                             rand_suffix("$agent-test-package"),
                             Default::default(),
                             ds_id.clone(),
-                        )).map(|pkg| (bf, ds_id, pkg))
-                    }).and_then(move |(bf, ds_id, pkg)| {
-                        let pkg_id = pkg.into_inner().id().clone();
+                        ))
+                        .map(|pkg| (bf, ds_id, pkg))
+                    })
+                    .and_then(move |(bf, ds_id, pkg)| {
+                        let pkg_id = pkg.take().id().clone();
                         bf.update_package(
                             pkg_id.clone(),
                             request::package::Update::new("new-package-name"),
-                        ).map(|_| (bf, pkg_id, ds_id))
-                    }).and_then(move |(bf, pkg_id, ds_id)| {
+                        )
+                        .map(|_| (bf, pkg_id, ds_id))
+                    })
+                    .and_then(move |(bf, pkg_id, ds_id)| {
                         bf.get_package_by_id(pkg_id).and_then(|pkg| {
-                            assert_eq!(
-                                pkg.into_inner().name().clone(),
-                                "new-package-name".to_string()
-                            );
+                            assert_eq!(pkg.take().name().clone(), "new-package-name".to_string());
                             Ok((bf, ds_id))
                         })
-                    }).and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+                    })
+                    .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
             )
         });
 
@@ -1220,8 +1387,9 @@ mod tests {
         test_path: String,
         test_files: Vec<String>,
     ) -> Box<
-        Fn(Blackfynn<ProgressIndicator>)
-            -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>,
+        Fn(
+            Blackfynn<ProgressIndicator>,
+        ) -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>,
     > {
         Box::new(move |bf| {
             let test_path = test_path.clone();
@@ -1233,20 +1401,25 @@ mod tests {
                         bf.create_dataset(request::dataset::Create::new(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        )).map(move |ds| (bf, ds))
-                    }).and_then(move |(bf, ds)| {
-                        let id = ds.as_ref().id().clone();
+                        ))
+                        .map(move |ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| {
+                        let id = ds.id().clone();
                         bf.grant_upload(id.clone())
                             .map(move |cred| (bf, id.clone(), cred))
-                    }).and_then(move |(bf, dataset_id, creds)| {
+                    })
+                    .and_then(move |(bf, dataset_id, creds)| {
                         bf.preview_upload(test_path, &test_files, false)
                             .map(|preview| (bf, dataset_id, preview, creds))
-                    }).and_then(|(bf, dataset_id, p, c)| {
+                    })
+                    .and_then(|(bf, dataset_id, p, c)| {
                         future::ok(UploadScaffold {
                             dataset_id,
                             preview: p,
                             upload_credential: c,
-                        }).join(Ok(bf))
+                        })
+                        .join(Ok(bf))
                     }),
             )
         })
@@ -1261,12 +1434,8 @@ mod tests {
                         let bf_clone = bf.clone();
                         let upload_credential = scaffold.upload_credential.clone();
                         let uploader = bf
-                            .s3_uploader(
-                                scaffold
-                                    .upload_credential
-                                    .into_inner()
-                                    .take_temp_credentials(),
-                            ).unwrap();
+                            .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
+                            .unwrap();
                         let dataset_id = scaffold.dataset_id.clone();
                         let outer_dataset_id = dataset_id.clone();
                         stream::futures_unordered(scaffold.preview.into_iter().map(
@@ -1280,17 +1449,22 @@ mod tests {
                                         package.files(),
                                         package.import_id().clone(),
                                         upload_credential.into(),
-                                    ).map(move |import_id| (dataset_id, import_id))
+                                    )
+                                    .map(move |import_id| (dataset_id, import_id))
                             },
-                        )).map(move |(dataset_id, import_id)| {
+                        ))
+                        .map(move |(dataset_id, import_id)| {
                             bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false)
-                        }).collect()
+                        })
+                        .collect()
                         .map(move |fs| (bf_clone, outer_dataset_id, fs))
-                    }).and_then(|(bf, dataset_id, fs)| {
+                    })
+                    .and_then(|(bf, dataset_id, fs)| {
                         stream::futures_unordered(fs)
                             .collect()
                             .map(|manifests| (bf, dataset_id, manifests))
-                    }).and_then(|(bf, dataset_id, manifests)| {
+                    })
+                    .and_then(|(bf, dataset_id, manifests)| {
                         let mut file_count = 0;
                         for manifest in manifests {
                             for entry in manifest.entries() {
@@ -1301,7 +1475,8 @@ mod tests {
                         }
                         assert_eq!(file_count, TEST_FILES.len());
                         Ok((bf, dataset_id))
-                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                    })
+                    .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
@@ -1323,12 +1498,8 @@ mod tests {
                         let dataset_id_inner = scaffold.dataset_id.clone();
                         let cred = scaffold.upload_credential.clone();
                         let uploader = bf
-                            .s3_uploader(
-                                scaffold
-                                    .upload_credential
-                                    .into_inner()
-                                    .take_temp_credentials(),
-                            ).unwrap();
+                            .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
+                            .unwrap();
                         stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
                             move |package| {
                                 uploader.multipart_upload_files(
@@ -1338,7 +1509,8 @@ mod tests {
                                     cred.clone().into(),
                                 )
                             },
-                        )).flatten()
+                        ))
+                        .flatten()
                         .filter_map(move |result| match result {
                             MultipartUploadResult::Complete(import_id, _) => {
                                 Some(bf.complete_upload(
@@ -1350,13 +1522,16 @@ mod tests {
                                 ))
                             }
                             _ => None,
-                        }).collect()
+                        })
+                        .collect()
                         .map(|fs| (fs, dataset_id_inner))
-                    }).and_then(|(fs, dataset_id)| {
+                    })
+                    .and_then(|(fs, dataset_id)| {
                         stream::futures_unordered(fs)
                             .collect()
                             .map(|manifests| (dataset_id, manifests))
-                    }).and_then(|(dataset_id, manifests)| {
+                    })
+                    .and_then(|(dataset_id, manifests)| {
                         let mut file_count = 0;
                         for manifest in manifests {
                             for entry in manifest.entries() {
@@ -1367,7 +1542,8 @@ mod tests {
                         }
                         assert_eq!(file_count, TEST_FILES.len());
                         Ok(dataset_id)
-                    }).and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
+                    })
+                    .and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
@@ -1394,18 +1570,15 @@ mod tests {
             let f = create_upload_scaffold(
                 (*BIG_TEST_DATA_DIR).to_string(),
                 (&*BIG_TEST_FILES).to_vec(),
-            )(bf).and_then(|(scaffold, bf)| {
+            )(bf)
+            .and_then(|(scaffold, bf)| {
                 let bf_clone = bf.clone();
                 let cred = scaffold.upload_credential.clone();
                 let dataset_id = scaffold.dataset_id.clone();
                 let dataset_id_outer = dataset_id.clone();
                 let mut uploader = bf
-                    .s3_uploader(
-                        scaffold
-                            .upload_credential
-                            .into_inner()
-                            .take_temp_credentials(),
-                    ).unwrap();
+                    .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
+                    .unwrap();
                 // Check the progress of the upload by polling every 1s:
                 if let Ok(mut indicator) = uploader.progress() {
                     thread::spawn(move || {
@@ -1436,7 +1609,8 @@ mod tests {
                             cb,
                         )
                     },
-                )).flatten()
+                ))
+                .flatten()
                 .map(move |result| {
                     match result {
                         MultipartUploadResult::Complete(import_id, _) => {
@@ -1457,13 +1631,16 @@ mod tests {
                             into_future_trait(future::ok(UploadStatus::Aborted(originating_err)))
                         }
                     }
-                }).collect()
+                })
+                .collect()
                 .map(|fs| (bf_clone, fs, dataset_id_outer))
-            }).and_then(|(bf, fs, dataset_id)| {
+            })
+            .and_then(|(bf, fs, dataset_id)| {
                 stream::futures_unordered(fs)
                     .collect()
                     .map(|manifests| (bf, dataset_id, manifests))
-            }).and_then(|(bf, dataset_id, manifests)| {
+            })
+            .and_then(|(bf, dataset_id, manifests)| {
                 for entry in manifests {
                     match entry {
                         UploadStatus::Completed(_) => assert!(true),
@@ -1474,7 +1651,8 @@ mod tests {
                     }
                 }
                 Ok((bf, dataset_id))
-            }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
+            })
+            .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
 
             into_future_trait(f)
         });
@@ -1519,7 +1697,8 @@ mod tests {
                                 file_path,
                                 package.files(),
                                 progress_indicator,
-                            ).collect()
+                            )
+                            .collect()
                             .map(|_| (bf_clone, dataset_id))
                             .and_then(move |(bf, dataset_id)| {
                                 bf.complete_upload(&import_id, &dataset_id, None, false, true)
@@ -1528,14 +1707,15 @@ mod tests {
 
                         futures::future::join_all(upload_futures)
                             .map(|_| (bf_clone, dataset_id_clone))
-                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                    })
+                    .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });
 
         // check result
         if result.is_err() {
-            // println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().display_chain().to_string());
             panic!();
         }
 

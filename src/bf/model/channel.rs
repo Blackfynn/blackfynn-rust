@@ -1,5 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
+use bf::api::BFName;
+
 /// A Blackfynn timeseries channel.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,11 +16,13 @@ pub struct Channel {
     group: Option<String>,
 }
 
-impl Channel {
-    pub fn name(&self) -> &String {
+impl BFName for Channel {
+    fn name(&self) -> &String {
         &self.name
     }
+}
 
+impl Channel {
     pub fn rate(&self) -> f64 {
         self.rate
     }
