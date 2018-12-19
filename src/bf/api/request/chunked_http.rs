@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use bf::api::client::progress::{ProgressCallback, ProgressUpdate};
 use bf::model::ImportId;
 
+// 1MB
+const DEFAULT_CHUNK_SIZE_BYTES: usize = 1000 * 1000;
+
 pub struct ChunkedFilePayload<C: ProgressCallback> {
     import_id: ImportId,
     file_path: PathBuf,
@@ -28,12 +31,10 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
     where
         P: AsRef<Path>,
     {
-        let default_chunk_size_bytes = 8000;
-
         Self::new_with_chunk_size(
             import_id,
             file_path,
-            default_chunk_size_bytes,
+            DEFAULT_CHUNK_SIZE_BYTES,
             progress_callback,
         )
     }
