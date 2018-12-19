@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use futures::*;
 
 use hyper;
-use hyper::client::{Builder, Client, HttpConnector};
+use hyper::client::{Client, HttpConnector};
 use hyper_tls::HttpsConnector;
 
 use serde;
@@ -38,31 +38,21 @@ use bf::util::futures::{into_future_trait, into_stream_trait};
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
 
-struct BlackFynnImpl<C>
-where
-    C: ProgressCallback + Clone,
-{
+struct BlackFynnImpl {
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
-    chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>,
     session_token: Option<SessionToken>,
     current_organization: Option<OrganizationId>,
 }
 
 /// The Blackfynn client.
-pub struct Blackfynn<C>
-where
-    C: ProgressCallback + Clone,
-{
+pub struct Blackfynn {
     // See https://users.rust-lang.org/t/best-pattern-for-async-update-of-self-object/15205
     // for notes on this pattern:
-    inner: Arc<Mutex<BlackFynnImpl<C>>>,
+    inner: Arc<Mutex<BlackFynnImpl>>,
 }
 
-impl<C> Clone for Blackfynn<C>
-where
-    C: ProgressCallback + Clone,
-{
+impl Clone for Blackfynn {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -165,21 +155,15 @@ macro_rules! delete {
 
 // ============================================================================s
 
-impl<C> Blackfynn<C>
-where
-    C: 'static + ProgressCallback + Clone,
-{
+impl Blackfynn {
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
         let connector = HttpsConnector::new(4).expect("bf:couldn't create https connector");
         let http_client = Client::builder().build(connector.clone());
-        let chunked_http_client = Builder::default()
-            .build::<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>(connector);
         Self {
             inner: Arc::new(Mutex::new(BlackFynnImpl {
                 config,
                 http_client,
-                chunked_http_client,
                 session_token: None,
                 current_organization: None,
             })),
@@ -208,11 +192,38 @@ where
     ) -> bf::Future<Q>
     where
         P: serde::Serialize,
+        I: IntoIterator<Item = RequestParam> + Send,
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        S: Into<String> + Send,
+    {
+        let serialized_payload = payload
+            .map(|p| {
+                serde_json::to_string(p)
+                    .map(Into::into)
+                    .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
+            }).unwrap_or(Ok(hyper::Body::empty()))
+            .map_err(Into::into);
+
+        match serialized_payload {
+            Ok(body) => self.request_with_body(route, method, params, body),
+            Err(err) => into_future_trait(futures::failed(err)),
+        }
+    }
+
+    fn request_with_body<I, Q, S>(
+        &self,
+        route: S,
+        method: hyper::Method,
+        params: I,
+        body: hyper::Body,
+    ) -> bf::Future<Q>
+    where
         I: IntoIterator<Item = RequestParam>,
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
         let url = self.get_url();
+        let method_clone = method.clone();
 
         // Build the request url: config environment base + route:
         let mut use_url = url.clone();
@@ -220,102 +231,6 @@ where
 
         let token = self.session_token().clone();
         let client = self.inner.lock().unwrap().http_client.clone();
-
-        // If query parameters are provided, add them to the constructed URL:
-        for (k, v) in params {
-            use_url
-                .query_pairs_mut()
-                .append_pair(k.as_str(), v.as_str());
-        }
-
-        // Lift the URL and body into Future:
-        let uri = use_url
-            .to_string()
-            .parse::<hyper::Uri>()
-            .into_future()
-            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
-
-        let f = payload
-            .map(|p| {
-                serde_json::to_string(p)
-                    .map(Into::into)
-                    .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
-            })
-            .unwrap_or_else(|| Ok(hyper::Body::empty()))
-            .map_err(Into::into)
-            .into_future()
-            .join(uri)
-            .and_then(move |(body, uri)| {
-                let mut req = hyper::Request::builder()
-                    .method(method.clone())
-                    .uri(uri.clone())
-                    .body(body)
-                    .unwrap();
-
-                // If a session token exists, use it to set the "X-SESSION-ID"
-                // header to make subsequent requests:
-                if let Some(session_token) = token {
-                    req.headers_mut().insert(
-                        X_SESSION_ID,
-                        hyper::header::HeaderValue::from_str(session_token.borrow()).unwrap(),
-                    );
-                }
-
-                // By default make every content type "application/json"
-                req.headers_mut().insert(
-                    hyper::header::CONTENT_TYPE,
-                    hyper::header::HeaderValue::from_str("application/json").unwrap(),
-                );
-
-                let error_method = method.to_string();
-                let error_url = uri.to_string();
-
-                // Make the actual request:
-                client
-                    .request(req)
-                    .map_err(move |e| {
-                        bf::Error::with_chain(
-                            e,
-                            format!(
-                                "bf:request<{method}:{url}>:execute",
-                                method = error_method,
-                                url = error_url
-                            ),
-                        )
-                    })
-                    .map(|resp| (resp, method, uri))
-            })
-            .and_then(move |(resp, method, uri)| {
-                Self::process_response(resp, method.to_string(), uri.to_string())
-            });
-
-        into_future_trait(f)
-    }
-
-    fn request_chunked<I, S, Q, T>(
-        &self,
-        route: S,
-        params: I,
-        filepath: T,
-        import_id: &ImportId,
-        progress_callback: C,
-    ) -> bf::Future<Q>
-    where
-        I: IntoIterator<Item = RequestParam>,
-        S: Into<String>,
-        Q: 'static + Send + serde::de::DeserializeOwned,
-        T: AsRef<Path>,
-    {
-        let chunked_file_payload =
-            ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
-        let url = self.get_url();
-
-        // Build the request url: config environment base + route:
-        let mut use_url = url.clone();
-        use_url.set_path(&route.into());
-
-        let token = self.session_token().clone();
-        let client = self.inner.lock().unwrap().chunked_http_client.clone();
 
         // If query parameters are provided, add them to the constructed URL:
         for (k, v) in params {
@@ -339,9 +254,14 @@ where
                     .body(chunked_file_payload)
                     .unwrap();
 
-                // If a session token exists, use it to set the "Authorization: Bearer"
-                // header to make subsequent requests:
+                // If a session token exists, use it to set the
+                // "X-SESSION-ID" header to make subsequent requests,
+                // and add it to the authorization header:
                 if let Some(session_token) = token {
+                    req.headers_mut().insert(
+                        X_SESSION_ID,
+                        hyper::header::HeaderValue::from_str(session_token.borrow()).unwrap(),
+                    );
                     req.headers_mut().insert(
                         hyper::header::AUTHORIZATION,
                         hyper::header::HeaderValue::from_str(&format!(
@@ -352,99 +272,88 @@ where
                     );
                 }
 
-                let error_url = uri.to_string();
+                // By default make every content type "application/json"
+                req.headers_mut().insert(
+                    hyper::header::CONTENT_TYPE,
+                    hyper::header::HeaderValue::from_str("application/json").unwrap(),
+                );
 
                 // Make the actual request:
-                client
-                    .request(req)
+                client.request(req).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:execute",
+                            method = method.to_string(),
+                            url = use_url.to_string()
+                        ),
+                    )
+                })
+            }).and_then(move |resp| {
+
+                let method_string = method_clone.to_string();
+                let method_string_clone = method_string.clone();
+
+                let url_string = url.to_string();
+                let url_string_clone = url_string.clone();
+
+                // Check the status code. And 5XX code will result in the
+                // future terminating with an error containing the message
+                // emitted from the API:
+                let status_code = resp.status();
+                resp
+                    .into_body()
+                    .concat2()
                     .map_err(move |e| {
                         bf::Error::with_chain(
                             e,
                             format!(
-                                "bf:request:{method}:[{url}]:execute",
-                                method = hyper::Method::POST,
-                                url = error_url
+                                "bf:request<{method}:{url}>:response",
+                                method = method_string,
+                                url = url_string
                             ),
                         )
-                    })
-                    .map(|resp| (resp, uri))
-            })
-            .and_then(move |(resp, uri)| {
-                Self::process_response(resp, hyper::Method::POST.to_string(), uri.to_string())
-            });
-
-        into_future_trait(f)
-    }
-
-    fn process_response<T>(
-        response: hyper::Response<hyper::Body>,
-        method_string: String,
-        url_string: String,
-    ) -> bf::Future<T>
-    where
-        T: 'static + Send + serde::de::DeserializeOwned,
-    {
-        let error_method = method_string.clone();
-        let error_url = url_string.clone();
-
-        // Check the status code. And 5XX code will result in the
-        // future terminating with an error containing the message
-        // emitted from the API:
-        let status_code = response.status();
-        let f = response
-            .into_body()
-            .concat2()
-            .map_err(move |e| {
-                bf::Error::with_chain(
-                    e,
-                    format!(
-                        "bf:request:{method}:[{url}]:response",
-                        method = method_string,
-                        url = url_string
-                    ),
-                )
-            })
-            .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
-            .and_then(
-                move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
-                    if status_code.is_client_error() || status_code.is_server_error() {
-                        return future::err(
-                            bf::error::ErrorKind::ApiError(
-                                status_code,
-                                String::from_utf8_lossy(&body).to_string(),
+                    }).and_then(move |body: hyper::Chunk| Ok((status_code, body)))
+                    .and_then(
+                        move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
+                            if status_code.is_client_error() || status_code.is_server_error() {
+                                return future::err(
+                                    bf::error::ErrorKind::ApiError(
+                                        status_code,
+                                        String::from_utf8_lossy(&body).to_string(),
+                                    ).into(),
+                                );
+                            }
+                            future::ok(body)
+                        },
+                    ).and_then(move |body: hyper::Chunk| {
+                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
+                        // and equal to `DEBUG`, dump the request contents to stderr:
+                        if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
+                            if log_level == "DEBUG" {
+                                eprintln!(
+                                    "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method_string_clone,
+                                    url = url_string_clone,
+                                    payload = Self::chunk_to_string(&body)
+                                );
+                            }
+                        }
+                        // Finally, attempt to parse the JSON response into a typeful representation:
+                        serde_json::from_slice(&body).map_err(move |e| {
+                            bf::Error::with_chain(
+                                e,
+                                format!(
+                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method_string_clone.clone(),
+                                    url = url_string_clone.clone(),
+                                    payload = Self::chunk_to_string(&body)
+                                ),
                             )
-                            .into(),
-                        );
-                    }
-                    future::ok(body)
-                },
-            )
-            .and_then(|body: hyper::Chunk| {
-                // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
-                // and equal to `DEBUG`, dump the request contents to stderr:
-                if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
-                    if log_level == "DEBUG" {
-                        eprintln!(
-                            "[DEBUG] bf:request:{method}:[{url}]:serialize:payload ~ {payload}",
-                            method = error_method,
-                            url = error_url,
-                            payload = Self::chunk_to_string(&body)
-                        );
-                    }
-                }
-                // Finally, attempt to parse the JSON response into a typeful representation:
-                serde_json::from_slice(&body).map_err(move |e| {
-                    bf::Error::with_chain(
-                        e,
-                        format!(
-                            "bf:request:{method}:[{url}]:serialize:payload ~ {payload}",
-                            method = error_method,
-                            url = error_url,
-                            payload = Self::chunk_to_string(&body)
-                        ),
-                    )
-                })
+                        })
+                    })
             });
+
         into_future_trait(f)
     }
 
@@ -469,7 +378,7 @@ where
     #[allow(dead_code)]
     fn run<F, T>(&self, runner: F) -> bf::Result<T>
     where
-        F: Fn(Blackfynn<C>) -> bf::Future<T>,
+        F: Fn(Blackfynn) -> bf::Future<T>,
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
@@ -792,53 +701,72 @@ where
         )
     }
 
-    /// Upload a file using the upload service.
-    pub fn upload_files<P>(
+    /// Upload a batch of files using the upload service.
+    pub fn upload_files<P, C>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
         path: P,
         files: &[model::S3File],
         progress_callback: C,
+        parts_to_send: Vec<usize>,
     ) -> bf::Stream<ImportId>
     where
         P: 'static + AsRef<Path>,
+        C: 'static + ProgressCallback + Clone,
     {
         let fs = files
             .iter()
             .zip(iter::repeat(path.as_ref().to_path_buf()))
-            .map(move |(file, path): (&model::S3File, PathBuf)| {
-                let import_id_clone = import_id.clone();
+            .flat_map(move |(file, path): (&model::S3File, PathBuf)| {
                 let mut file_path = path.clone();
 
                 file_path.push(file.file_name());
 
-                self.request_chunked(
-                    route!(
-                        "/upload/organizations/{organization_id}/id/{import_id}",
-                        organization_id,
-                        import_id
-                    ),
-                    params!(
-                        "filename" => file.file_name().to_string()
-                    ),
+                let chunked_file_payload = ChunkedFilePayload::new(
+                    import_id.clone(),
                     file_path,
-                    &import_id,
+                    parts_to_send.clone(),
                     progress_callback.clone(),
-                )
-                .and_then(move |response: response::UploadResponse| {
-                    if response.success {
-                        future::ok(import_id_clone)
-                    } else {
-                        future::err(
-                            bf::error::ErrorKind::UploadError(
-                                response
-                                    .error
-                                    .unwrap_or_else(|| String::from("No error message supplied.")),
-                            )
-                            .into(),
+                );
+
+                chunked_file_payload.map(move |chunk| match chunk {
+                    Ok(chunk) => {
+                        let import_id = import_id.clone();
+                        let import_id_clone = import_id.clone();
+                        into_future_trait(
+                            self.request_with_body(
+                                route!(
+                                    "/upload/organizations/{organization_id}/id/{import_id}",
+                                    organization_id,
+                                    import_id
+                                ),
+                                hyper::Method::POST,
+                                params!(
+                                    "filename" => file.file_name().to_string()
+                                ),
+                                hyper::Body::from(chunk),
+                            ).and_then(
+                                move |response: response::UploadResponse| {
+                                    if response.success {
+                                        future::ok(import_id_clone)
+                                    } else {
+                                        future::err(
+                                            bf::error::ErrorKind::UploadError(
+                                                response.error.unwrap_or_else(|| {
+                                                    String::from("No error message supplied.")
+                                                }),
+                                            ).into(),
+                                        )
+                                    }
+                                },
+                            ),
                         )
                     }
+                    Err(err) => into_future_trait(futures::failed(bf::Error::with_chain(
+                        err,
+                        "bf:upload_files:chunk",
+                    ))),
                 })
             });
 
@@ -927,7 +855,7 @@ mod tests {
         }
     }
 
-    fn bf() -> Blackfynn<ProgressIndicator> {
+    fn bf() -> Blackfynn {
         Blackfynn::new((*CONFIG).clone())
     }
 
@@ -1386,11 +1314,7 @@ mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<
-        Fn(
-            Blackfynn<ProgressIndicator>,
-        ) -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>,
-    > {
+    ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = test_files.clone();
@@ -1697,8 +1621,8 @@ mod tests {
                                 file_path,
                                 package.files(),
                                 progress_indicator,
-                            )
-                            .collect()
+                                vec![],
+                            ).collect()
                             .map(|_| (bf_clone, dataset_id))
                             .and_then(move |(bf, dataset_id)| {
                                 bf.complete_upload(&import_id, &dataset_id, None, false, true)

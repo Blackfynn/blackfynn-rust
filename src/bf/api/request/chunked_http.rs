@@ -1,33 +1,33 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
-
-use hyper;
-use hyper::body::Payload;
-
-use futures::Async;
-
 use std::fs::File;
-use std::io::{Error, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use bf::api::client::progress::{ProgressCallback, ProgressUpdate};
 use bf::model::ImportId;
 
 // 1MB
-const DEFAULT_CHUNK_SIZE_BYTES: usize = 1000 * 1000;
+const DEFAULT_CHUNK_SIZE_BYTES: u64 = 1000 * 1000;
 
 pub struct ChunkedFilePayload<C: ProgressCallback> {
     import_id: ImportId,
     file_path: PathBuf,
     file: File,
-    chunk_size_bytes: usize,
+    chunk_size_bytes: u64,
     bytes_sent: u64,
     file_size: u64,
+    parts_to_send: Vec<usize>,
     parts_sent: usize,
     progress_callback: C,
 }
 
 impl<C: ProgressCallback> ChunkedFilePayload<C> {
-    pub fn new<P>(import_id: ImportId, file_path: P, progress_callback: C) -> Self
+    pub fn new<P>(
+        import_id: ImportId,
+        file_path: P,
+        parts_to_send: Vec<usize>,
+        progress_callback: C,
+    ) -> Self
     where
         P: AsRef<Path>,
     {
@@ -35,6 +35,7 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
             import_id,
             file_path,
             DEFAULT_CHUNK_SIZE_BYTES,
+            parts_to_send,
             progress_callback,
         )
     }
@@ -42,12 +43,15 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
     pub fn new_with_chunk_size<P>(
         import_id: ImportId,
         file_path: P,
-        chunk_size_bytes: usize,
+        chunk_size_bytes: u64,
+        mut parts_to_send: Vec<usize>,
         progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
     {
+        parts_to_send.sort();
+
         let file_path = file_path.as_ref().to_path_buf();
 
         let file = File::open(file_path.clone()).unwrap();
@@ -55,47 +59,58 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
 
         Self {
             import_id,
-            file_path: file_path.clone(),
-            file: File::open(file_path).unwrap(),
+            file_path,
+            file,
             chunk_size_bytes,
             bytes_sent: 0,
             file_size,
+            parts_to_send,
             parts_sent: 0,
             progress_callback,
         }
     }
 }
 
-impl<C> Payload for ChunkedFilePayload<C>
+impl<C> Iterator for ChunkedFilePayload<C>
 where
     C: 'static + ProgressCallback,
 {
-    type Data = hyper::Chunk;
-    type Error = Error;
+    type Item = Result<hyper::Chunk, io::Error>;
 
-    fn poll_data(&mut self) -> Result<Async<Option<Self::Data>>, Self::Error> {
-        let mut buffer = vec![0; self.chunk_size_bytes];
-        let read_result = self.file.read(&mut buffer);
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buffer = vec![0; self.chunk_size_bytes as usize];
 
-        read_result.map(|bytes_read| {
-            if bytes_read > 0 {
-                self.parts_sent += 1;
-                self.bytes_sent += bytes_read as u64;
+        let chunk = self
+            .file
+            .seek(SeekFrom::Start(
+                self.parts_to_send[self.parts_sent] as u64 * self.chunk_size_bytes,
+            )).and_then(|_| self.file.read(&mut buffer))
+            .map(|bytes_read| {
+                if bytes_read > 0 {
+                    self.parts_sent += 1;
+                    self.bytes_sent += bytes_read as u64;
 
-                let progress_update = ProgressUpdate::new(
-                    self.parts_sent,
-                    self.import_id.clone(),
-                    self.file_path.clone(),
-                    self.bytes_sent,
-                    self.file_size,
-                );
-                self.progress_callback.on_update(&progress_update);
+                    let progress_update = ProgressUpdate::new(
+                        self.parts_sent,
+                        self.import_id.clone(),
+                        self.file_path.clone(),
+                        self.bytes_sent,
+                        self.file_size,
+                    );
+                    self.progress_callback.on_update(&progress_update);
 
-                buffer.truncate(bytes_read);
-                Async::Ready(Some(hyper::Chunk::from(buffer)))
-            } else {
-                Async::Ready(None)
-            }
-        })
+                    buffer.truncate(bytes_read);
+
+                    Some(hyper::Chunk::from(buffer))
+                } else {
+                    None
+                }
+            });
+
+        match chunk {
+            Ok(Some(chunk)) => Some(Ok(chunk)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
     }
 }
