@@ -74,7 +74,6 @@ where
     type Error = Error;
 
     fn poll_data(&mut self) -> Result<Async<Option<Self::Data>>, Self::Error> {
-        // let mut buffer = Vec::with_capacity(self.chunk_size_bytes);
         let mut buffer = vec![0; self.chunk_size_bytes];
         let read_result = self.file.read(&mut buffer);
 
@@ -85,7 +84,6 @@ where
 
                 let progress_update = ProgressUpdate::new(
                     self.parts_sent,
-                    true,
                     self.import_id.clone(),
                     self.file_path.clone(),
                     self.bytes_sent,

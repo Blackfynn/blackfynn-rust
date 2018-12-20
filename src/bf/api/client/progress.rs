@@ -38,11 +38,10 @@ impl ProgressCallback for Arc<Box<dyn ProgressCallback>> {
     }
 }
 
-/// A type representing progress updates for a multipart upload.
+/// A type representing progress updates for an upload.
 #[derive(Debug, Clone, Hash)]
 pub struct ProgressUpdate {
     part_number: usize,
-    is_multipart: bool,
     import_id: ImportId,
     file_path: PathBuf,
     bytes_sent: u64,
@@ -52,7 +51,6 @@ pub struct ProgressUpdate {
 impl ProgressUpdate {
     pub fn new(
         part_number: usize,
-        is_multipart: bool,
         import_id: ImportId,
         file_path: PathBuf,
         bytes_sent: u64,
@@ -60,17 +58,11 @@ impl ProgressUpdate {
     ) -> Self {
         Self {
             part_number,
-            is_multipart,
             import_id,
             file_path,
             bytes_sent,
             size,
         }
-    }
-
-    /// Returns whether the file was uploaded as a multipart upload.
-    pub fn is_multipart(&self) -> bool {
-        self.is_multipart
     }
 
     /// Returns the S3 part number of the uploading file.

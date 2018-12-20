@@ -248,7 +248,6 @@ where
 
                                 let update = ProgressUpdate::new(
                                     part_number as usize,
-                                    true,
                                     import_id,
                                     file_path,
                                     updated_bytes_sent,
@@ -541,7 +540,6 @@ impl S3Uploader {
             }).and_then(move |_| {
                 let update = ProgressUpdate::new(
                     1,
-                    false,
                     import_id.clone(),
                     file_path,
                     file_size,
