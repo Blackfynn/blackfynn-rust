@@ -65,7 +65,7 @@ impl ProgressUpdate {
         }
     }
 
-    /// Returns the S3 part number of the uploading file.
+    /// Returns the part number of the uploading file.
     pub fn part_number(&self) -> usize {
         self.part_number
     }
