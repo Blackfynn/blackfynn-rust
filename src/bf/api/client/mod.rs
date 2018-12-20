@@ -32,13 +32,15 @@ use bf::config::{Config, Environment};
 use bf::model::{
     self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };
-use bf::util::futures::{ into_future_trait, into_stream_trait };
+use bf::util::futures::{into_future_trait, into_stream_trait};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
 
 struct BlackFynnImpl<C>
-where C: ProgressCallback + Clone {
+where
+    C: ProgressCallback + Clone,
+{
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
     chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>,
@@ -48,14 +50,18 @@ where C: ProgressCallback + Clone {
 
 /// The Blackfynn client.
 pub struct Blackfynn<C>
-where C: ProgressCallback + Clone {
+where
+    C: ProgressCallback + Clone,
+{
     // See https://users.rust-lang.org/t/best-pattern-for-async-update-of-self-object/15205
     // for notes on this pattern:
     inner: Arc<Mutex<BlackFynnImpl<C>>>,
 }
 
 impl<C> Clone for Blackfynn<C>
-where C: ProgressCallback + Clone {
+where
+    C: ProgressCallback + Clone,
+{
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -159,7 +165,8 @@ macro_rules! delete {
 // ============================================================================s
 
 impl<C> Blackfynn<C>
-where C: 'static + ProgressCallback + Clone
+where
+    C: 'static + ProgressCallback + Clone,
 {
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
@@ -233,7 +240,7 @@ where C: 'static + ProgressCallback + Clone
                 serde_json::to_string(p)
                     .map(Into::into)
                     .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
-            }).unwrap_or(Ok(hyper::Body::empty()))
+            }).unwrap_or_else(|| Ok(hyper::Body::empty()))
             .map_err(Into::into)
             .into_future()
             .join(uri)
@@ -270,8 +277,9 @@ where C: 'static + ProgressCallback + Clone
                         ),
                     )
                 })
-            })
-            .and_then(move |resp| Self::process_response(resp, method_clone.to_string(), url.to_string()));
+            }).and_then(move |resp| {
+                Self::process_response(resp, method_clone.to_string(), url.to_string())
+            });
 
         into_future_trait(f)
     }
@@ -282,7 +290,7 @@ where C: 'static + ProgressCallback + Clone
         params: I,
         filepath: T,
         import_id: &ImportId,
-        progress_callback: C
+        progress_callback: C,
     ) -> bf::Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
@@ -290,7 +298,8 @@ where C: 'static + ProgressCallback + Clone
         Q: 'static + Send + serde::de::DeserializeOwned,
         T: AsRef<Path>,
     {
-        let chunked_file_payload = ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
+        let chunked_file_payload =
+            ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
         let url = self.get_url();
 
         // Build the request url: config environment base + route:
@@ -314,37 +323,40 @@ where C: 'static + ProgressCallback + Clone
             .into_future()
             .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
 
-        let f = uri.and_then(move |uri| {
-            let mut req = hyper::Request::builder()
-                .method(hyper::Method::POST)
-                .uri(uri)
-                .body(chunked_file_payload)
-                .unwrap();
+        let f = uri
+            .and_then(move |uri| {
+                let mut req = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(uri)
+                    .body(chunked_file_payload)
+                    .unwrap();
 
-            // If a session token exists, use it to set the "Authorization: Bearer"
-            // header to make subsequent requests:
-            if let Some(session_token) = token {
-                req.headers_mut().insert(
-                    hyper::header::AUTHORIZATION,
-                    hyper::header::HeaderValue::from_str(&format!(
-                        "Bearer {}",
-                        session_token.into_inner()
-                    )).unwrap(),
-                );
-            }
+                // If a session token exists, use it to set the "Authorization: Bearer"
+                // header to make subsequent requests:
+                if let Some(session_token) = token {
+                    req.headers_mut().insert(
+                        hyper::header::AUTHORIZATION,
+                        hyper::header::HeaderValue::from_str(&format!(
+                            "Bearer {}",
+                            session_token.into_inner()
+                        )).unwrap(),
+                    );
+                }
 
-            // Make the actual request:
-            client.request(req).map_err(move |e| {
-                bf::Error::with_chain(
-                    e,
-                    format!(
-                        "bf:request<{method}:{url}>:execute",
-                        method = hyper::Method::POST,
-                        url = use_url.to_string()
-                    ),
-                )
-            })
-        }).and_then(move |resp| Self::process_response(resp, hyper::Method::POST.to_string(), url.to_string()));
+                // Make the actual request:
+                client.request(req).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:execute",
+                            method = hyper::Method::POST,
+                            url = use_url.to_string()
+                        ),
+                    )
+                })
+            }).and_then(move |resp| {
+                Self::process_response(resp, hyper::Method::POST.to_string(), url.to_string())
+            });
 
         into_future_trait(f)
     }
@@ -749,8 +761,8 @@ where C: 'static + ProgressCallback + Clone
         organization_id: &OrganizationId,
         import_id: &ImportId,
         path: P,
-        files: &Vec<model::S3File>,
-        progress_callback: C
+        files: &[model::S3File],
+        progress_callback: C,
     ) -> bf::Stream<ImportId>
     where
         P: 'static + AsRef<Path>,
@@ -775,7 +787,7 @@ where C: 'static + ProgressCallback + Clone
                     ),
                     file_path,
                     &import_id,
-                    progress_callback.clone()
+                    progress_callback.clone(),
                 ).and_then(move |response: response::UploadResponse| {
                     if response.success {
                         future::ok(import_id_clone)
@@ -1207,7 +1219,10 @@ mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn<ProgressIndicator>) -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>> {
+    ) -> Box<
+        Fn(Blackfynn<ProgressIndicator>)
+            -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>,
+    > {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = test_files.clone();
@@ -1513,8 +1528,7 @@ mod tests {
 
                         futures::future::join_all(upload_futures)
                             .map(|_| (bf_clone, dataset_id_clone))
-                    })
-                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         });

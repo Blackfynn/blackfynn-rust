@@ -57,9 +57,9 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
             import_id,
             file_path: file_path.clone(),
             file: File::open(file_path).unwrap(),
-            chunk_size_bytes: chunk_size_bytes,
+            chunk_size_bytes,
             bytes_sent: 0,
-            file_size: file_size,
+            file_size,
             parts_sent: 0,
             progress_callback,
         }
@@ -67,7 +67,8 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
 }
 
 impl<C> Payload for ChunkedFilePayload<C>
-where C: 'static + ProgressCallback
+where
+    C: 'static + ProgressCallback,
 {
     type Data = hyper::Chunk;
     type Error = Error;
