@@ -8,7 +8,7 @@ The official Blackfynn Rust library.
     </tr>
     <tr>
         <td><strong>Windows</strong></td>
-        <td><a href="https://ci.appveyor.com/project/JillianCunningham/blackfynn-rust/branch/master" title="Appveyor Build Status"><img src="https://ci.appveyor.com/api/projects/status/afm4tise2oo0r9ki?svg=true" alt="appveyor-badge"></img></a></td>
+        <td><a href="https://ci.appveyor.com/project/Blackfynn/blackfynn-rust/branch/master" title="Appveyor Build Status"><img src="https://ci.appveyor.com/api/projects/status/afm4tise2oo0r9ki?svg=true" alt="appveyor-badge"></img></a></td>
     </tr>
 </table>
 
