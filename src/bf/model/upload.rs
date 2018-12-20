@@ -497,7 +497,7 @@ mod tests {
     use super::*;
     use std::fs::File;
 
-    const USE_CHUNK_SIZE: u64 = 10;
+    const USE_CHUNK_SIZE: u64 = 100;
 
     #[test]
     pub fn empty_file_chunking_works() {
@@ -514,8 +514,12 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
         let metadata = File::open(path.clone()).unwrap().metadata().unwrap();
         let result = file_chunks(path, metadata.len(), USE_CHUNK_SIZE);
-        assert!(result.is_ok());
-        let chunks = result.unwrap();
-        assert!(chunks.len() > 1);
+        match result {
+            Err(err) => panic!("file chunking error: {:?}", err),
+            Ok(_) => {
+                let chunks = result.unwrap();
+                assert!(chunks.len() > 1);
+            }
+        }
     }
 }

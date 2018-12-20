@@ -71,3 +71,11 @@ impl IntoIterator for Manifests {
         self.0.into_iter()
     }
 }
+
+/// A file upload preview response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadResponse {
+    pub success: bool,
+    pub error: Option<String>
+}

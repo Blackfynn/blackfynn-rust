@@ -23,9 +23,9 @@ pub enum Environment {
 }
 
 impl Environment {
-    pub fn url(&self) -> Url {
+    pub fn url(self) -> Url {
         use self::Environment::*;
-        match *self {
+        match self {
             Local => {
                 let api_loc =
                     env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");

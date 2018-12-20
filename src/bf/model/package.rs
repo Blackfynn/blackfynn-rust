@@ -70,6 +70,7 @@ pub enum PackageState {
     Deleting,
     Error,
     Failed,
+    Importing,
     Pending,
     Ready,
     Runnable,

@@ -2,21 +2,22 @@
 
 //! Functions to interact with the Blackfynn platform.
 
+pub mod progress;
 pub mod s3;
 
-pub use self::s3::{
-    MultipartUploadResult, ProgressCallback, ProgressUpdate, S3Uploader, UploadProgress,
-    UploadProgressIter,
-};
+pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProgressIter};
+
+pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::env;
-use std::path::Path;
+use std::iter;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::*;
 
 use hyper;
-use hyper::client::{Client, HttpConnector};
+use hyper::client::{Builder, Client, HttpConnector};
 use hyper_tls::HttpsConnector;
 
 use serde;
@@ -24,32 +25,43 @@ use serde_json;
 
 use tokio;
 
+use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
 use bf;
 use bf::config::{Config, Environment};
 use bf::model::{
     self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
 };
-use bf::util::futures::into_future_trait;
+use bf::util::futures::{into_future_trait, into_stream_trait};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
 
-struct BlackFynnImpl {
+struct BlackFynnImpl<C>
+where
+    C: ProgressCallback + Clone,
+{
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
+    chunked_http_client: Client<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>,
     session_token: Option<SessionToken>,
     current_organization: Option<OrganizationId>,
 }
 
 /// The Blackfynn client.
-pub struct Blackfynn {
+pub struct Blackfynn<C>
+where
+    C: ProgressCallback + Clone,
+{
     // See https://users.rust-lang.org/t/best-pattern-for-async-update-of-self-object/15205
     // for notes on this pattern:
-    inner: Arc<Mutex<BlackFynnImpl>>,
+    inner: Arc<Mutex<BlackFynnImpl<C>>>,
 }
 
-impl Clone for Blackfynn {
+impl<C> Clone for Blackfynn<C>
+where
+    C: ProgressCallback + Clone,
+{
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -71,7 +83,7 @@ type Nothing = serde_json::Value;
 // Useful builder macros:
 macro_rules! route {
     ($uri:expr, $($var:ident),*) => (
-        format!($uri, $($var = Into::<String>::into($var))*)
+        format!($uri, $($var = Into::<String>::into($var)),*)
     )
 }
 
@@ -152,15 +164,21 @@ macro_rules! delete {
 
 // ============================================================================s
 
-impl Blackfynn {
+impl<C> Blackfynn<C>
+where
+    C: 'static + ProgressCallback + Clone,
+{
     /// Create a new Blackfynn API client.
     pub fn new(config: Config) -> Self {
         let connector = HttpsConnector::new(4).expect("bf:couldn't create https connector");
-        let http_client = Client::builder().build(connector);
+        let http_client = Client::builder().build(connector.clone());
+        let chunked_http_client = Builder::default()
+            .build::<HttpsConnector<HttpConnector>, ChunkedFilePayload<C>>(connector);
         Self {
             inner: Arc::new(Mutex::new(BlackFynnImpl {
                 config,
                 http_client,
+                chunked_http_client,
                 session_token: None,
                 current_organization: None,
             })),
@@ -176,7 +194,11 @@ impl Blackfynn {
         String::from_utf8_lossy(&as_bytes).to_string()
     }
 
-    fn request<I, S, P, Q>(
+    fn get_url(&self) -> url::Url {
+        self.inner.lock().unwrap().config.env().url().clone()
+    }
+
+    fn request<I, P, Q, S>(
         &self,
         route: S,
         method: hyper::Method,
@@ -184,13 +206,16 @@ impl Blackfynn {
         payload: Option<&P>,
     ) -> bf::Future<Q>
     where
-        I: IntoIterator<Item = RequestParam>,
         P: serde::Serialize,
+        I: IntoIterator<Item = RequestParam>,
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
+        let url = self.get_url();
+        let method_clone = method.clone();
+
         // Build the request url: config environment base + route:
-        let mut use_url = self.inner.lock().unwrap().config.env().url().clone();
+        let mut use_url = url.clone();
         use_url.set_path(&route.into());
 
         let token = self.session_token().clone();
@@ -210,26 +235,18 @@ impl Blackfynn {
             .into_future()
             .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
 
-        let body: Result<hyper::Body, serde_json::Error> = match payload {
-            Some(p) => serde_json::to_string(p).map(Into::into),
-            None => Ok(hyper::Body::empty()),
-        };
-
-        let body = future::result::<_, bf::error::Error>(body.map_err(Into::into))
-            .map_err(|e| bf::Error::with_chain(e, "bf:request:body"));
-
-        let url_string_1 = use_url.to_string();
-        let method_string_1 = method.to_string();
-        let url_string_2 = use_url.to_string();
-        let method_string_2 = method.to_string();
-        let url_string_3 = use_url.to_string();
-        let method_string_3 = method.to_string();
-
-        let f = uri
-            .join(body)
-            .and_then(move |(uri, body): (hyper::Uri, hyper::Body)| {
+        let f = payload
+            .map(|p| {
+                serde_json::to_string(p)
+                    .map(Into::into)
+                    .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
+            }).unwrap_or_else(|| Ok(hyper::Body::empty()))
+            .map_err(Into::into)
+            .into_future()
+            .join(uri)
+            .and_then(move |(body, uri)| {
                 let mut req = hyper::Request::builder()
-                    .method(method)
+                    .method(method.clone())
                     .uri(uri)
                     .body(body)
                     .unwrap();
@@ -242,83 +259,178 @@ impl Blackfynn {
                         hyper::header::HeaderValue::from_str(session_token.as_ref()).unwrap(),
                     );
                 }
+
                 // By default make every content type "application/json"
                 req.headers_mut().insert(
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 );
+
                 // Make the actual request:
                 client.request(req).map_err(move |e| {
                     bf::Error::with_chain(
                         e,
                         format!(
                             "bf:request<{method}:{url}>:execute",
-                            method = method_string_1,
-                            url = url_string_1
+                            method = method.to_string(),
+                            url = use_url.to_string()
                         ),
                     )
                 })
-            })
-            .and_then(|response: hyper::Response<hyper::Body>| {
-                // Check the status code. And 5XX code will result in the
-                // future terminating with an error containing the message
-                // emitted from the API:
-                let status_code = response.status();
-                response
-                    .into_body()
-                    .concat2()
-                    .map_err(move |e| {
-                        bf::Error::with_chain(
-                            e,
-                            format!(
-                                "bf:request<{method}:{url}>:response",
-                                method = method_string_2,
-                                url = url_string_2
-                            ),
-                        )
-                    })
-                    .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
-                    .and_then(
-                        move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
-                            if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(
-                                    bf::error::ErrorKind::ApiError(
-                                        status_code,
-                                        String::from_utf8_lossy(&body).to_string(),
-                                    ).into(),
-                                );
-                            }
-                            future::ok(body)
-                        },
-                    )
-                    .and_then(|body: hyper::Chunk| {
-                        // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
-                        // and equal to `DEBUG`, dump the request contents to stderr:
-                        if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
-                            if log_level == "DEBUG" {
-                                eprintln!(
-                                    "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = method_string_3,
-                                    url = url_string_3,
-                                    payload = Self::chunk_to_string(&body)
-                                );
-                            }
-                        }
-                        // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice::<Q>(&body).map_err(move |e| {
-                            bf::Error::with_chain(
-                                e,
-                                format!(
-                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = method_string_3,
-                                    url = url_string_3,
-                                    payload = Self::chunk_to_string(&body)
-                                ),
-                            )
-                        })
-                    })
+            }).and_then(move |resp| {
+                Self::process_response(resp, method_clone.to_string(), url.to_string())
             });
 
+        into_future_trait(f)
+    }
+
+    fn request_chunked<I, S, Q, T>(
+        &self,
+        route: S,
+        params: I,
+        filepath: T,
+        import_id: &ImportId,
+        progress_callback: C,
+    ) -> bf::Future<Q>
+    where
+        I: IntoIterator<Item = RequestParam>,
+        S: Into<String>,
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        T: AsRef<Path>,
+    {
+        let chunked_file_payload =
+            ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
+        let url = self.get_url();
+
+        // Build the request url: config environment base + route:
+        let mut use_url = url.clone();
+        use_url.set_path(&route.into());
+
+        let token = self.session_token().clone();
+        let client = self.inner.lock().unwrap().chunked_http_client.clone();
+
+        // If query parameters are provided, add them to the constructed URL:
+        for (k, v) in params {
+            use_url
+                .query_pairs_mut()
+                .append_pair(k.as_str(), v.as_str());
+        }
+
+        // Lift the URL and body into Future:
+        let uri = use_url
+            .to_string()
+            .parse::<hyper::Uri>()
+            .into_future()
+            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
+
+        let f = uri
+            .and_then(move |uri| {
+                let mut req = hyper::Request::builder()
+                    .method(hyper::Method::POST)
+                    .uri(uri)
+                    .body(chunked_file_payload)
+                    .unwrap();
+
+                // If a session token exists, use it to set the "Authorization: Bearer"
+                // header to make subsequent requests:
+                if let Some(session_token) = token {
+                    req.headers_mut().insert(
+                        hyper::header::AUTHORIZATION,
+                        hyper::header::HeaderValue::from_str(&format!(
+                            "Bearer {}",
+                            session_token.into_inner()
+                        )).unwrap(),
+                    );
+                }
+
+                // Make the actual request:
+                client.request(req).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:execute",
+                            method = hyper::Method::POST,
+                            url = use_url.to_string()
+                        ),
+                    )
+                })
+            }).and_then(move |resp| {
+                Self::process_response(resp, hyper::Method::POST.to_string(), url.to_string())
+            });
+
+        into_future_trait(f)
+    }
+
+    fn process_response<Q, S, T>(
+        response: hyper::Response<hyper::Body>,
+        method_string: S,
+        url_string: T,
+    ) -> bf::Future<Q>
+    where
+        Q: 'static + Send + serde::de::DeserializeOwned,
+        S: Into<String>,
+        T: Into<String>,
+    {
+        let method_string: String = method_string.into();
+        let url_string: String = url_string.into();
+        let method_string_clone = method_string.clone();
+        let url_string_clone = url_string.clone();
+
+        // Check the status code. And 5XX code will result in the
+        // future terminating with an error containing the message
+        // emitted from the API:
+        let status_code = response.status();
+        let f = response
+            .into_body()
+            .concat2()
+            .map_err(move |e| {
+                bf::Error::with_chain(
+                    e,
+                    format!(
+                        "bf:request<{method}:{url}>:response",
+                        method = method_string,
+                        url = url_string
+                    ),
+                )
+            }).and_then(move |body: hyper::Chunk| Ok((status_code, body)))
+            .and_then(
+                move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
+                    if status_code.is_client_error() || status_code.is_server_error() {
+                        return future::err(
+                            bf::error::ErrorKind::ApiError(
+                                status_code,
+                                String::from_utf8_lossy(&body).to_string(),
+                            ).into(),
+                        );
+                    }
+                    future::ok(body)
+                },
+            ).and_then(|body: hyper::Chunk| {
+                // If the debug flag `BLACKFYNN_LOG_LEVEL` is present
+                // and equal to `DEBUG`, dump the request contents to stderr:
+                if let Ok(log_level) = env::var("BLACKFYNN_LOG_LEVEL") {
+                    if log_level == "DEBUG" {
+                        eprintln!(
+                            "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
+                            method = method_string_clone,
+                            url = url_string_clone,
+                            payload = Self::chunk_to_string(&body)
+                        );
+                    }
+                }
+                // Finally, attempt to parse the JSON response into a typeful representation:
+                serde_json::from_slice(&body).map_err(move |e| {
+                    bf::Error::with_chain(
+                        e,
+                        format!(
+                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                            method = method_string_clone,
+                            url = url_string_clone,
+                            payload = Self::chunk_to_string(&body)
+                        ),
+                    )
+                })
+            });
         into_future_trait(f)
     }
 
@@ -343,7 +455,7 @@ impl Blackfynn {
     #[allow(dead_code)]
     fn run<F, T>(&self, runner: F) -> bf::Result<T>
     where
-        F: Fn(Blackfynn) -> bf::Future<T>,
+        F: Fn(Blackfynn<C>) -> bf::Future<T>,
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
@@ -621,12 +733,14 @@ impl Blackfynn {
     /// Completes the file upload process.
     pub fn complete_upload(
         &self,
-        import_id: ImportId,
-        dataset_id: DatasetId,
+        import_id: &ImportId,
+        dataset_id: &DatasetId,
         destination_id: Option<&PackageId>,
         append: bool,
+        use_upload_service: bool,
     ) -> bf::Future<response::Manifests> {
         let mut params = params!(
+            "uploadService" => if use_upload_service { "true" } else { "false" },
             "append" => if append { "true" } else { "false" },
             "datasetId" => dataset_id
         );
@@ -639,6 +753,57 @@ impl Blackfynn {
             route!("/files/upload/complete/{import_id}", import_id),
             params
         )
+    }
+
+    /// Upload a file using the upload service.
+    pub fn upload_files<P>(
+        &self,
+        organization_id: &OrganizationId,
+        import_id: &ImportId,
+        path: P,
+        files: &[model::S3File],
+        progress_callback: C,
+    ) -> bf::Stream<ImportId>
+    where
+        P: 'static + AsRef<Path>,
+    {
+        let fs = files
+            .iter()
+            .zip(iter::repeat(path.as_ref().to_path_buf()))
+            .map(move |(file, path): (&model::S3File, PathBuf)| {
+                let import_id_clone = import_id.clone();
+                let mut file_path = path.clone();
+
+                file_path.push(file.file_name());
+
+                self.request_chunked(
+                    route!(
+                        "/upload/organizations/{organization_id}/id/{import_id}",
+                        organization_id,
+                        import_id
+                    ),
+                    params!(
+                        "filename" => file.file_name().to_string()
+                    ),
+                    file_path,
+                    &import_id,
+                    progress_callback.clone(),
+                ).and_then(move |response: response::UploadResponse| {
+                    if response.success {
+                        future::ok(import_id_clone)
+                    } else {
+                        future::err(
+                            bf::error::ErrorKind::UploadError(
+                                response
+                                    .error
+                                    .unwrap_or_else(|| String::from("No error message supplied.")),
+                            ).into(),
+                        )
+                    }
+                })
+            });
+
+        into_stream_trait(stream::futures_unordered(fs))
     }
 }
 
@@ -686,7 +851,41 @@ mod tests {
         static ref BIG_TEST_DATA_DIR: String = test_data_dir("/big");
     }
 
-    fn bf() -> Blackfynn {
+    struct Inner(sync::Mutex<bool>);
+
+    impl Inner {
+        pub fn new() -> Self {
+            Inner(sync::Mutex::new(false))
+        }
+    }
+
+    struct ProgressIndicator {
+        inner: sync::Arc<Inner>,
+    }
+
+    impl Clone for ProgressIndicator {
+        fn clone(&self) -> Self {
+            Self {
+                inner: Arc::clone(&self.inner),
+            }
+        }
+    }
+
+    impl ProgressIndicator {
+        pub fn new() -> Self {
+            Self {
+                inner: sync::Arc::new(Inner::new()),
+            }
+        }
+    }
+
+    impl ProgressCallback for ProgressIndicator {
+        fn on_update(&self, _update: &ProgressUpdate) {
+            *self.inner.0.lock().unwrap() = true;
+        }
+    }
+
+    fn bf() -> Blackfynn<ProgressIndicator> {
         Blackfynn::new((*CONFIG).clone())
     }
 
@@ -1020,7 +1219,10 @@ mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
+    ) -> Box<
+        Fn(Blackfynn<ProgressIndicator>)
+            -> bf::Future<(UploadScaffold, Blackfynn<ProgressIndicator>)>,
+    > {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = test_files.clone();
@@ -1081,7 +1283,7 @@ mod tests {
                                     ).map(move |import_id| (dataset_id, import_id))
                             },
                         )).map(move |(dataset_id, import_id)| {
-                            bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                            bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false)
                         }).collect()
                         .map(move |fs| (bf_clone, outer_dataset_id, fs))
                     }).and_then(|(bf, dataset_id, fs)| {
@@ -1139,7 +1341,13 @@ mod tests {
                         )).flatten()
                         .filter_map(move |result| match result {
                             MultipartUploadResult::Complete(import_id, _) => {
-                                Some(bf.complete_upload(import_id, dataset_id.clone(), None, false))
+                                Some(bf.complete_upload(
+                                    &import_id,
+                                    &dataset_id.clone(),
+                                    None,
+                                    false,
+                                    false,
+                                ))
                             }
                             _ => None,
                         }).collect()
@@ -1178,40 +1386,6 @@ mod tests {
 
     #[test]
     fn multipart_big_file_uploading() {
-        struct Inner(sync::Mutex<bool>);
-
-        impl Inner {
-            pub fn new() -> Self {
-                Inner(sync::Mutex::new(false))
-            }
-        }
-
-        struct ProgressIndicator {
-            inner: sync::Arc<Inner>,
-        }
-
-        impl Clone for ProgressIndicator {
-            fn clone(&self) -> Self {
-                Self {
-                    inner: Arc::clone(&self.inner),
-                }
-            }
-        }
-
-        impl ProgressIndicator {
-            pub fn new() -> Self {
-                Self {
-                    inner: sync::Arc::new(Inner::new()),
-                }
-            }
-        }
-
-        impl ProgressCallback for ProgressIndicator {
-            fn on_update(&self, _update: &ProgressUpdate) {
-                *self.inner.0.lock().unwrap() = true;
-            }
-        }
-
         let cb = ProgressIndicator::new();
 
         let result = bf().run(move |bf| {
@@ -1267,7 +1441,7 @@ mod tests {
                     match result {
                         MultipartUploadResult::Complete(import_id, _) => {
                             into_future_trait(
-                                bf.complete_upload(import_id, dataset_id.clone(), None, false)
+                                bf.complete_upload(&import_id, &dataset_id, None, false, false)
                                     .then(|r| {
                                         // wrap the results as an UploadStatus so we can return
                                         // errors as strictly value, rather something that will
@@ -1310,4 +1484,62 @@ mod tests {
             panic!();
         }
     }
+
+    #[test]
+    fn upload_using_upload_service() {
+        // create upload
+        let result = bf().run(move |bf| {
+            let f =
+                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
+                    .and_then(move |(scaffold, bf)| bf.get_user().map(|user| (user, scaffold, bf)))
+                    .and_then(move |(user, scaffold, bf)| {
+                        let org = user.preferred_organization().unwrap().clone();
+                        let bf = bf.clone();
+                        let bf_clone = bf.clone();
+                        let dataset_id = scaffold.dataset_id.clone();
+                        let dataset_id_clone = scaffold.dataset_id.clone();
+
+                        let upload_futures = scaffold.preview.into_iter().map(move |package| {
+                            let import_id = package.import_id().clone();
+                            let bf = bf.clone();
+                            let bf_clone = bf.clone();
+                            let dataset_id = dataset_id.clone();
+                            let package = package.clone();
+
+                            let file_path = path::Path::new(&TEST_DATA_DIR.to_string())
+                                .to_path_buf()
+                                .canonicalize()
+                                .unwrap();
+
+                            let progress_indicator = ProgressIndicator::new();
+
+                            bf.upload_files(
+                                &org,
+                                &import_id,
+                                file_path,
+                                package.files(),
+                                progress_indicator,
+                            ).collect()
+                            .map(|_| (bf_clone, dataset_id))
+                            .and_then(move |(bf, dataset_id)| {
+                                bf.complete_upload(&import_id, &dataset_id, None, false, true)
+                            })
+                        });
+
+                        futures::future::join_all(upload_futures)
+                            .map(|_| (bf_clone, dataset_id_clone))
+                    }).and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+
+            into_future_trait(f)
+        });
+
+        // check result
+        if result.is_err() {
+            // println!("{}", result.unwrap_err().display_chain().to_string());
+            panic!();
+        }
+
+        // TODO: check that upload exists in the platform
+    }
+
 }
