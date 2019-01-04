@@ -4,6 +4,7 @@
 
 mod account;
 mod channel;
+mod concept;
 mod dataset;
 mod file;
 mod organization;
@@ -19,6 +20,7 @@ pub struct EmptyMap {}
 // Re-export
 pub use self::account::ApiSession;
 pub use self::channel::Channel;
+pub use self::concept::{Model, Record};
 pub use self::dataset::{
     ChangeResponse, CollaboratorChanges, CollaboratorCounts, Collaborators, Dataset,
 };

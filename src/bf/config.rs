@@ -22,19 +22,43 @@ pub enum Environment {
     Production,
 }
 
+/// Service definition, containing the URL of the service.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum Service {
+    #[allow(dead_code)]
+    API,
+    #[allow(dead_code)]
+    Analytics,
+    #[allow(dead_code)]
+    Concepts,
+}
+
 impl Environment {
-    pub fn url(self) -> Url {
+    pub fn service_url(self, service: Service) -> Url {
         use self::Environment::*;
-        match self {
-            Local => {
+        match (self, service) {
+            (Local, Service::API) => {
                 let api_loc =
                     env::var("BLACKFYNN_API_LOC").expect("BLACKFYNN_API_LOC must be defined");
                 api_loc
                     .parse::<Url>()
                     .unwrap_or_else(|_| panic!("Not a valid url: {}", api_loc))
             }
-            Development => "https://dev.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
-            Production => "https://api.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
+            (Local, s) => panic!("Local environment not supported for {:?}", s),
+            (Development, Service::API) => "https://dev.blackfynn.io".parse::<Url>().unwrap(), // This should never fail
+            (Production, Service::API) => "https://api.blackfynn.io".parse::<Url>().unwrap(),
+            (Development, Service::Analytics) => "https://dev-graph-view-service-use1.blackfynn.io"
+                .parse::<Url>()
+                .unwrap(),
+            (Production, Service::Analytics) => "https://prod-graph-view-service-use1.blackfynn.io"
+                .parse::<Url>()
+                .unwrap(),
+            (Development, Service::Concepts) => "https://concepts.dev.blackfynn.io:443"
+                .parse::<Url>()
+                .unwrap(),
+            (Production, Service::Concepts) => {
+                "https://concepts.blackfynn.io".parse::<Url>().unwrap()
+            }
         }
     }
 }
@@ -86,8 +110,18 @@ impl Config {
     }
 
     #[allow(dead_code)]
-    pub fn api_url(&self) -> Url {
-        self.env.url()
+    pub fn api_service(&self) -> Url {
+        self.env.service_url(Service::API)
+    }
+
+    #[allow(dead_code)]
+    pub fn analytics_service(&self) -> Url {
+        self.env.service_url(Service::Analytics)
+    }
+
+    #[allow(dead_code)]
+    pub fn concepts_service(&self) -> Url {
+        self.env.service_url(Service::Concepts)
     }
 
     #[allow(dead_code)]

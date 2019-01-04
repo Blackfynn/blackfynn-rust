@@ -5,6 +5,7 @@
 mod account;
 mod aws;
 mod channel;
+mod concept;
 mod dataset;
 mod file;
 mod organization;
@@ -22,6 +23,7 @@ pub use self::aws::{
     SecretKey,
 };
 pub use self::channel::Channel;
+pub use self::concept::{Model, ModelId, Record, RecordDatum, RecordId};
 pub use self::dataset::{Dataset, DatasetId};
 pub use self::file::File;
 pub use self::organization::{Organization, OrganizationId};

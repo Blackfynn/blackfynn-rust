@@ -29,9 +29,10 @@ use tokio;
 use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
 use bf;
-use bf::config::{Config, Environment};
+use bf::config::{Config, Environment, Service};
 use bf::model::{
-    self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
+    self, DatasetId, ImportId, ModelId, OrganizationId, PackageId, RecordId, SessionToken,
+    TemporaryCredential, UserId,
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -119,47 +120,71 @@ macro_rules! payload {
 }
 
 macro_rules! get {
-    ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::GET, params!(), payload!())
+    ($target:expr, $service:expr, $route:expr) => {
+        $target.request($service, $route, hyper::Method::GET, params!(), payload!())
     };
-    ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::GET, $params, payload!())
+    ($target:expr, $service:expr, $route:expr, $params:expr) => {
+        $target.request($service, $route, hyper::Method::GET, $params, payload!())
     };
 }
 
 macro_rules! post {
-    ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::POST, params!(), payload!())
+    ($target:expr, $service:expr, $route:expr) => {
+        $target.request($service, $route, hyper::Method::POST, params!(), payload!())
     };
-    ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!())
+    ($target:expr, $service:expr, $route:expr, $params:expr) => {
+        $target.request($service, $route, hyper::Method::POST, $params, payload!())
     };
-    ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!($payload))
+    ($target:expr, $service:expr, $route:expr, $params:expr, $payload:expr) => {
+        $target.request(
+            $service,
+            $route,
+            hyper::Method::POST,
+            $params,
+            payload!($payload),
+        )
     };
 }
 
 macro_rules! put {
-    ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::PUT, params!(), payload!())
+    ($target:expr, $service:expr, $route:expr) => {
+        $target.request($service, $route, hyper::Method::PUT, params!(), payload!())
     };
-    ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!())
+    ($target:expr, $service:expr, $route:expr, $params:expr) => {
+        $target.request($service, $route, hyper::Method::PUT, $params, payload!())
     };
-    ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!($payload))
+    ($target:expr, $service:expr, $route:expr, $params:expr, $payload:expr) => {
+        $target.request(
+            $service,
+            $route,
+            hyper::Method::PUT,
+            $params,
+            payload!($payload),
+        )
     };
 }
 
 macro_rules! delete {
-    ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::DELETE, params!(), payload!())
+    ($target:expr, $service:expr, $route:expr) => {
+        $target.request(
+            $service,
+            $route,
+            hyper::Method::DELETE,
+            params!(),
+            payload!(),
+        )
     };
-    ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!())
+    ($target:expr, $service:expr, $route:expr, $params:expr) => {
+        $target.request($service, $route, hyper::Method::DELETE, $params, payload!())
     };
-    ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!($payload))
+    ($target:expr, $service:expr, $route:expr, $params:expr, $payload:expr) => {
+        $target.request(
+            $service,
+            $route,
+            hyper::Method::DELETE,
+            $params,
+            payload!($payload),
+        )
     };
 }
 
@@ -195,12 +220,19 @@ where
         String::from_utf8_lossy(&as_bytes).to_string()
     }
 
-    fn get_url(&self) -> url::Url {
-        self.inner.lock().unwrap().config.env().url().clone()
+    fn service_url(&self, service: Service) -> url::Url {
+        self.inner
+            .lock()
+            .unwrap()
+            .config
+            .env()
+            .service_url(service)
+            .clone()
     }
 
     fn request<I, P, Q, S>(
         &self,
+        service: Service,
         route: S,
         method: hyper::Method,
         params: I,
@@ -212,7 +244,7 @@ where
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
-        let url = self.get_url();
+        let url = self.service_url(service);
 
         // Build the request url: config environment base + route:
         let mut use_url = url.clone();
@@ -294,6 +326,7 @@ where
 
     fn request_chunked<I, S, Q, T>(
         &self,
+        service: Service,
         route: S,
         params: I,
         filepath: T,
@@ -308,7 +341,7 @@ where
     {
         let chunked_file_payload =
             ChunkedFilePayload::new(import_id.clone(), filepath, progress_callback);
-        let url = self.get_url();
+        let url = self.service_url(service);
 
         // Build the request url: config environment base + route:
         let mut use_url = url.clone();
@@ -501,6 +534,8 @@ where
         self.inner.lock().unwrap().config = Config::new(env);
     }
 
+    // === API =================================================================
+
     /// Log in to the Blackfynn API.
     ///
     /// If successful, the Blackfynn client will store the resulting session
@@ -514,19 +549,24 @@ where
         let payload = request::ApiLogin::new(api_key.into(), api_secret.into());
         let this = self.clone();
         into_future_trait(
-            post!(self, "/account/api/session", params!(), &payload).and_then(
-                move |login_response: response::ApiSession| {
-                    this.inner.lock().unwrap().session_token =
-                        Some(login_response.session_token().clone());
-                    Ok(login_response)
-                },
-            ),
+            post!(
+                self,
+                Service::API,
+                "/account/api/session",
+                params!(),
+                &payload
+            )
+            .and_then(move |login_response: response::ApiSession| {
+                this.inner.lock().unwrap().session_token =
+                    Some(login_response.session_token().clone());
+                Ok(login_response)
+            }),
         )
     }
 
     /// Get the current user.
     pub fn get_user(&self) -> bf::Future<model::User> {
-        get!(self, "/user/")
+        get!(self, Service::API, "/user/")
     }
 
     /// Sets the preferred organization of the current user.
@@ -536,27 +576,29 @@ where
     ) -> bf::Future<model::User> {
         let this = self.clone();
         let user = request::User::with_organization(organization_id);
-        into_future_trait(put!(self, "/user/", params!(), &user).and_then(
-            move |user_response: model::User| {
-                this.set_current_organization(user_response.preferred_organization());
-                Ok(user_response)
-            },
-        ))
+        into_future_trait(
+            put!(self, Service::API, "/user/", params!(), &user).and_then(
+                move |user_response: model::User| {
+                    this.set_current_organization(user_response.preferred_organization());
+                    Ok(user_response)
+                },
+            ),
+        )
     }
 
     /// List the organizations the user is a member of.
     pub fn get_organizations(&self) -> bf::Future<response::Organizations> {
-        get!(self, "/organizations/")
+        get!(self, Service::API, "/organizations/")
     }
 
     /// Get a specific organization.
     pub fn get_organization_by_id(&self, id: OrganizationId) -> bf::Future<response::Organization> {
-        get!(self, route!("/organizations/{id}", id))
+        get!(self, Service::API, route!("/organizations/{id}", id))
     }
 
     /// Get a listing of the datasets the current user has access to.
     pub fn get_datasets(&self) -> bf::Future<Vec<response::Dataset>> {
-        get!(self, "/datasets/")
+        get!(self, Service::API, "/datasets/")
     }
 
     /// Create a new dataset.
@@ -564,12 +606,18 @@ where
         &self,
         payload: request::dataset::Create,
     ) -> bf::Future<response::Dataset> {
-        post!(self, "/datasets/", params!(), payload!(payload))
+        post!(
+            self,
+            Service::API,
+            "/datasets/",
+            params!(),
+            payload!(payload)
+        )
     }
 
     /// Get a specific dataset by its ID.
     pub fn get_dataset_by_id(&self, id: DatasetId) -> bf::Future<response::Dataset> {
-        get!(self, route!("/datasets/{id}", id))
+        get!(self, Service::API, route!("/datasets/{id}", id))
     }
 
     /// Get a specific dataset by its name.
@@ -596,7 +644,11 @@ where
 
     /// Get the collaborators of the data set.
     pub fn get_dataset_collaborators(&self, id: DatasetId) -> bf::Future<response::Collaborators> {
-        get!(self, route!("/datasets/{id}/collaborators", id))
+        get!(
+            self,
+            Service::API,
+            route!("/datasets/{id}/collaborators", id)
+        )
     }
 
     /// Share this data set with another user.
@@ -607,6 +659,7 @@ where
     ) -> bf::Future<response::CollaboratorChanges> {
         put!(
             self,
+            Service::API,
             route!("/datasets/{id}/collaborators", id),
             params!(),
             payload!(users)
@@ -621,6 +674,7 @@ where
     ) -> bf::Future<response::CollaboratorChanges> {
         delete!(
             self,
+            Service::API,
             route!("/datasets/{id}/collaborators", id),
             params!(),
             payload!(users)
@@ -635,6 +689,7 @@ where
     ) -> bf::Future<response::Dataset> {
         put!(
             self,
+            Service::API,
             route!("/datasets/{id}", id),
             params!(),
             payload!(payload)
@@ -643,7 +698,8 @@ where
 
     /// Delete an existing dataset.
     pub fn delete_dataset(&self, id: DatasetId) -> bf::Future<()> {
-        let f: bf::Future<response::EmptyMap> = delete!(self, route!("/datasets/{id}", id));
+        let f: bf::Future<response::EmptyMap> =
+            delete!(self, Service::API, route!("/datasets/{id}", id));
         into_future_trait(f.map(|_| ()))
     }
 
@@ -652,17 +708,23 @@ where
         &self,
         payload: request::package::Create,
     ) -> bf::Future<response::Package> {
-        post!(self, "/packages/", params!(), payload!(payload))
+        post!(
+            self,
+            Service::API,
+            "/packages/",
+            params!(),
+            payload!(payload)
+        )
     }
 
     /// Get a specific package.
     pub fn get_package_by_id(&self, id: PackageId) -> bf::Future<response::Package> {
-        get!(self, route!("/packages/{id}", id))
+        get!(self, Service::API, route!("/packages/{id}", id))
     }
 
     /// Get the source files that are part of a package.
     pub fn get_package_sources(&self, id: PackageId) -> bf::Future<response::Files> {
-        get!(self, route!("/packages/{id}/sources", id))
+        get!(self, Service::API, route!("/packages/{id}/sources", id))
     }
 
     /// Update an existing package.
@@ -673,6 +735,7 @@ where
     ) -> bf::Future<response::Package> {
         put!(
             self,
+            Service::API,
             route!("/packages/{id}", id),
             params!(),
             payload!(payload)
@@ -691,7 +754,11 @@ where
 
     /// Get the members that belong to the specified organization.
     pub fn get_members_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<model::User>> {
-        get!(self, route!("/organizations/{id}/members", id))
+        get!(
+            self,
+            Service::API,
+            route!("/organizations/{id}/members", id)
+        )
     }
 
     /// Get the members that belong to the current users organization.
@@ -706,17 +773,21 @@ where
 
     /// Get the teams that belong to the specified organization.
     pub fn get_teams_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<response::Team>> {
-        get!(self, route!("/organizations/{id}/teams", id))
+        get!(self, Service::API, route!("/organizations/{id}/teams", id))
     }
 
     /// Grant temporary upload access to the specific dataset for the current session.
     pub fn grant_upload(&self, id: DatasetId) -> bf::Future<response::UploadCredential> {
-        get!(self, route!("/security/user/credentials/upload/{id}", id))
+        get!(
+            self,
+            Service::API,
+            route!("/security/user/credentials/upload/{id}", id)
+        )
     }
 
     /// Grant temporary streaming access for the current user.
     pub fn grant_streaming(&self) -> bf::Future<response::TemporaryCredential> {
-        get!(self, "/security/user/credentials/streaming")
+        get!(self, Service::API, "/security/user/credentials/streaming")
     }
 
     /// Generate a preview of the files to be uploaded.
@@ -745,6 +816,7 @@ where
 
         post!(
             self,
+            Service::API,
             "/files/upload/preview",
             params!("append" => if append { "true" } else { "false" }),
             &request::UploadPreview::new(&s3_files)
@@ -787,6 +859,7 @@ where
 
         post!(
             self,
+            Service::API,
             route!("/files/upload/complete/{import_id}", import_id),
             params
         )
@@ -814,6 +887,7 @@ where
                 file_path.push(file.file_name());
 
                 self.request_chunked(
+                    Service::API,
                     route!(
                         "/upload/organizations/{organization_id}/id/{import_id}",
                         organization_id,
@@ -844,6 +918,107 @@ where
 
         into_stream_trait(stream::futures_unordered(fs))
     }
+
+    // === Models + Records ====================================================
+
+    /// Get all models in a dataset.
+    pub fn get_models(&self, dataset_id: DatasetId) -> bf::Future<Vec<response::Model>> {
+        get!(
+            self,
+            Service::Concepts,
+            route!("/datasets/{dataset_id}/concepts", dataset_id)
+        )
+    }
+
+    /// Create a new model associated with a dataset.
+    pub fn create_model(
+        &self,
+        dataset_id: DatasetId,
+        payload: request::concept::CreateModel,
+    ) -> bf::Future<response::Model> {
+        post!(
+            self,
+            Service::Concepts,
+            route!("/datasets/{dataset_id}/concepts", dataset_id),
+            params!(),
+            payload!(payload)
+        )
+    }
+
+    /// Update an existing model associated with a dataset.
+    pub fn update_model(
+        &self,
+        dataset_id: DatasetId,
+        model_id: ModelId,
+        payload: request::concept::UpdateModel,
+    ) -> bf::Future<response::Model> {
+        put!(
+            self,
+            Service::Concepts,
+            route!(
+                "/datasets/{dataset_id}/concepts/{model_id}",
+                dataset_id,
+                model_id
+            ),
+            params!(),
+            payload!(payload)
+        )
+    }
+
+    /// Delete an existing model associated with a dataset.
+    pub fn delete_model(
+        &self,
+        dataset_id: DatasetId,
+        model_id: ModelId,
+    ) -> bf::Future<response::Model> {
+        put!(
+            self,
+            Service::Concepts,
+            route!(
+                "/datasets/{dataset_id}/concepts/{model_id}",
+                dataset_id,
+                model_id
+            )
+        )
+    }
+
+    /// Get all record instances of a model.
+    pub fn get_all_records(
+        &self,
+        dataset_id: DatasetId,
+        model_id: ModelId,
+    ) -> bf::Future<Vec<response::Record>> {
+        get!(
+            self,
+            Service::Concepts,
+            route!(
+                "/datasets/{dataset_id}/concepts/{model_id}/instances",
+                dataset_id,
+                model_id
+            )
+        )
+    }
+
+    /// Gets a specific record of a model.
+    pub fn get_record(
+        &self,
+        dataset_id: DatasetId,
+        model_id: ModelId,
+        record_id: RecordId,
+    ) -> bf::Future<response::Record> {
+        get!(
+            self,
+            Service::Concepts,
+            route!(
+                "/datasets/{dataset_id}/concepts/{model_id}/instances/{record_id}",
+                dataset_id,
+                model_id,
+                record_id
+            )
+        )
+    }
+
+    // === Analytics ===========================================================
 }
 
 #[cfg(test)]
@@ -1100,7 +1275,10 @@ mod tests {
             panic!("{}", ds.unwrap_err().display_chain().to_string());
         }
 
-        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+        assert!(ds
+            .unwrap()
+            .get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE))
+            .is_some());
     }
 
     #[test]
@@ -1135,7 +1313,10 @@ mod tests {
             panic!("{}", ds.unwrap_err().display_chain().to_string());
         }
 
-        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+        assert!(ds
+            .unwrap()
+            .get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE))
+            .is_some());
     }
 
     #[test]
