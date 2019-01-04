@@ -16,8 +16,8 @@ pub struct ChunkedFilePayload<C: ProgressCallback> {
     chunk_size_bytes: u64,
     bytes_sent: u64,
     file_size: u64,
-    parts_to_send: Vec<usize>,
     parts_sent: usize,
+    pub total_chunks: usize,
     progress_callback: C,
 }
 
@@ -25,7 +25,6 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
     pub fn new<P>(
         import_id: ImportId,
         file_path: P,
-        parts_to_send: Vec<usize>,
         progress_callback: C,
     ) -> Self
     where
@@ -35,7 +34,6 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
             import_id,
             file_path,
             DEFAULT_CHUNK_SIZE_BYTES,
-            parts_to_send,
             progress_callback,
         )
     }
@@ -44,18 +42,17 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
         import_id: ImportId,
         file_path: P,
         chunk_size_bytes: u64,
-        mut parts_to_send: Vec<usize>,
         progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
     {
-        parts_to_send.sort();
-
         let file_path = file_path.as_ref().to_path_buf();
 
         let file = File::open(file_path.clone()).unwrap();
         let file_size = file.metadata().unwrap().len();
+
+        let total_chunks = file_size as f64/chunk_size_bytes as f64;
 
         Self {
             import_id,
@@ -64,8 +61,8 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
             chunk_size_bytes,
             bytes_sent: 0,
             file_size,
-            parts_to_send,
             parts_sent: 0,
+            total_chunks: total_chunks.ceil() as usize,
             progress_callback,
         }
     }
@@ -83,7 +80,7 @@ where
         let chunk = self
             .file
             .seek(SeekFrom::Start(
-                self.parts_to_send[self.parts_sent] as u64 * self.chunk_size_bytes,
+                self.parts_sent as u64 * self.chunk_size_bytes,
             )).and_then(|_| self.file.read(&mut buffer))
             .map(|bytes_read| {
                 if bytes_read > 0 {

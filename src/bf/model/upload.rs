@@ -4,6 +4,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::fs::File;
 use std::{cmp, fs};
 
 use futures::*;
@@ -154,6 +155,12 @@ impl S3FileChunk {
     }
 }
 
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct Checksum(String);
+
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct MultipartUploadId(pub String);
+
 /// A type representing a file to be uploaded.
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +168,8 @@ pub struct S3File {
     file_name: String,
     upload_id: Option<UploadId>,
     size: u64,
+    checksum: Option<Checksum>,
+    multipart_upload_id: Option<MultipartUploadId>,
 }
 
 fn file_chunks<P: AsRef<Path>>(
@@ -177,6 +186,30 @@ fn file_chunks<P: AsRef<Path>>(
 }
 
 impl S3File {
+    fn md5sum<P: AsRef<Path>, Q: AsRef<Path>>(
+        path: P,
+        file: Q,
+    ) -> bf::Result<Checksum> {
+        let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
+        let mut file = File::open(file_path)?;
+        let mut md5_context = md5::Context::new();
+
+        loop {
+            // consume 100MB at a time
+            let mut buffer = vec![0; 100_000_000];
+            let bytes_read = file.read(&mut buffer)?;
+
+            if bytes_read > 0 {
+                buffer.truncate(bytes_read);
+                md5_context.consume(buffer);
+            } else {
+                break;
+            }
+        }
+
+        Ok(Checksum(format!("{:x}", md5_context.compute())))
+    }
+
     /// Given a file path, this function checks to see if the path:
     ///
     /// 1) exists
@@ -225,11 +258,31 @@ impl S3File {
         file: Q,
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
-        let (file_name, metadata) = Self::normalize(path, file)?;
+        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+
         Ok(Self {
             upload_id,
             file_name,
             size: metadata.len(),
+            checksum: None,
+            multipart_upload_id: None
+        })
+    }
+
+    pub fn new_with_checksum<P: AsRef<Path>, Q: AsRef<Path>>(
+        path: P,
+        file: Q,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
+        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+        let checksum = Self::md5sum(path, file)?;
+
+        Ok(Self {
+            upload_id,
+            file_name,
+            size: metadata.len(),
+            checksum: Some(checksum),
+            multipart_upload_id: None
         })
     }
 
@@ -262,6 +315,11 @@ impl S3File {
     #[allow(dead_code)]
     pub fn upload_id(&self) -> Option<&UploadId> {
         self.upload_id.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub fn multipart_upload_id(&self) -> Option<&MultipartUploadId> {
+        self.multipart_upload_id.as_ref()
     }
 
     #[allow(dead_code)]
