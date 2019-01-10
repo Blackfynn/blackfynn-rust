@@ -12,6 +12,7 @@ extern crate hyper_tls;
 extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
+extern crate md5;
 extern crate rand;
 extern crate rusoto_core;
 extern crate rusoto_credential;
@@ -20,6 +21,7 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate sha2;
 extern crate tokio;
 extern crate url;
 

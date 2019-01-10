@@ -8,6 +8,7 @@ use std::fs::File;
 use std::{cmp, fs};
 
 use futures::*;
+use md5::{Md5, Digest};
 
 use bf::util::futures::{into_future_trait, into_stream_trait};
 use bf::{self, model};
@@ -156,7 +157,7 @@ impl S3FileChunk {
 }
 
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
-pub struct Checksum(String);
+pub struct Checksum(pub String);
 
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct MultipartUploadId(pub String);
@@ -169,6 +170,7 @@ pub struct S3File {
     upload_id: Option<UploadId>,
     size: u64,
     checksum: Option<Checksum>,
+    chunk_size: Option<u64>,
     multipart_upload_id: Option<MultipartUploadId>,
 }
 
@@ -192,7 +194,7 @@ impl S3File {
     ) -> bf::Result<Checksum> {
         let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
         let mut file = File::open(file_path)?;
-        let mut md5_context = md5::Context::new();
+        let mut md5_hasher = Md5::new();
 
         loop {
             // consume 100MB at a time
@@ -201,13 +203,13 @@ impl S3File {
 
             if bytes_read > 0 {
                 buffer.truncate(bytes_read);
-                md5_context.consume(buffer);
+                md5_hasher.input(buffer);
             } else {
                 break;
             }
         }
 
-        Ok(Checksum(format!("{:x}", md5_context.compute())))
+        Ok(Checksum(format!("{:x}", md5_hasher.result())))
     }
 
     /// Given a file path, this function checks to see if the path:
@@ -265,6 +267,7 @@ impl S3File {
             file_name,
             size: metadata.len(),
             checksum: None,
+            chunk_size: None,
             multipart_upload_id: None
         })
     }
@@ -282,6 +285,7 @@ impl S3File {
             file_name,
             size: metadata.len(),
             checksum: Some(checksum),
+            chunk_size: None,
             multipart_upload_id: None
         })
     }
@@ -305,6 +309,11 @@ impl S3File {
             ))
         })?;
         S3File::new(path, file, upload_id)
+    }
+
+    #[allow(dead_code)]
+    pub fn chunk_size(&self) -> Option<u64> {
+        self.chunk_size
     }
 
     #[allow(dead_code)]
