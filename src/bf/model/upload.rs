@@ -162,6 +162,13 @@ pub struct Checksum(pub String);
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct MultipartUploadId(pub String);
 
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkedUploadProperties {
+    pub chunk_size: u64,
+    total_chunks: usize
+}
+
 /// A type representing a file to be uploaded.
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,7 +177,7 @@ pub struct S3File {
     upload_id: Option<UploadId>,
     size: u64,
     checksum: Option<Checksum>,
-    chunk_size: Option<u64>,
+    chunked_upload: Option<ChunkedUploadProperties>,
     multipart_upload_id: Option<MultipartUploadId>,
 }
 
@@ -267,7 +274,7 @@ impl S3File {
             file_name,
             size: metadata.len(),
             checksum: None,
-            chunk_size: None,
+            chunked_upload: None,
             multipart_upload_id: None
         })
     }
@@ -285,7 +292,7 @@ impl S3File {
             file_name,
             size: metadata.len(),
             checksum: Some(checksum),
-            chunk_size: None,
+            chunked_upload: None,
             multipart_upload_id: None
         })
     }
@@ -312,8 +319,8 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn chunk_size(&self) -> Option<u64> {
-        self.chunk_size
+    pub fn chunked_upload(&self) -> Option<&ChunkedUploadProperties> {
+        self.chunked_upload.as_ref()
     }
 
     #[allow(dead_code)]

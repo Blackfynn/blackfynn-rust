@@ -252,6 +252,7 @@ impl Blackfynn {
             .into_future()
             .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
 
+        println!("Initializing request future...");
         let f = uri
             .and_then(move |uri| {
                 let mut req = hyper::Request::builder()
@@ -283,6 +284,7 @@ impl Blackfynn {
                 }
 
                 // Make the actual request:
+                println!("Actually requesting...");
                 client.request(req).map_err(move |e| {
                     bf::Error::with_chain(
                         e,
@@ -320,6 +322,7 @@ impl Blackfynn {
                     }).and_then(move |body: hyper::Chunk| Ok((status_code, body)))
                     .and_then(
                         move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
+                            println!("Response received: {}: {}", status_code, String::from_utf8_lossy(&body).to_string());
                             if status_code.is_client_error() || status_code.is_server_error() {
                                 return future::err(
                                     bf::error::ErrorKind::ApiError(
@@ -750,97 +753,113 @@ impl Blackfynn {
         organization_id: &OrganizationId,
         import_id: &ImportId,
         path: P,
-        files: &[model::S3File],
+        files: Vec<model::S3File>,
         progress_callback: C,
-    ) -> bf::Stream<ImportId>
+    ) -> bf::Stream<()>
     where
         P: 'static + AsRef<Path>,
         C: 'static + ProgressCallback + Clone,
     {
-        let fs = files
-            .iter()
-            .zip(iter::repeat(path.as_ref().to_path_buf()))
-            .flat_map(move |(file, path): (&model::S3File, PathBuf)| {
-                let mut file_path = path.clone();
+        let bf = self.clone();
+        let organization_id = organization_id.clone();
+        let import_id = import_id.clone();
 
-                file_path.push(file.file_name());
+        let fs = stream::futures_unordered(
+            files.into_iter().zip(iter::repeat(path.as_ref().to_path_buf()))
+                .map(|file| future::ok::<(model::S3File, PathBuf), bf::Error>(file.clone()))
+        ).map(move |(file, path): (model::S3File, PathBuf)| {
+            let mut file_path = path.clone();
+            let file = file.clone();
 
-                let chunked_file_payload = if let Some(chunk_size) = file.chunk_size() {
-                    ChunkedFilePayload::new_with_chunk_size(
-                        import_id.clone(),
-                        file_path,
-                        chunk_size,
-                        progress_callback.clone(),
-                    )
-                } else {
-                    if env::var("BLACKFYNN_LOG_LEVEL").unwrap_or_else(|_| String::from("INFO")) == "DEBUG" {
-                        eprintln!(
-                            "[DEBUG] bf:upload_file_chunks<file = {file_name}> :: \
-                             No chunk size received from the upload service. \
-                             Falling back to default.",
-                            file_name = file.file_name()
-                        );
-                    }
-                    ChunkedFilePayload::new(
-                        import_id.clone(),
-                        file_path,
-                        progress_callback.clone(),
-                    )
-                };
+            file_path.push(file.file_name());
 
-                chunked_file_payload.enumerate().map(move |(chunk_number, chunk)| match chunk {
-                    Ok(file_chunk) => {
-                        if let Some(MultipartUploadId(multipart_upload_id)) = file.multipart_upload_id() {
-                            let import_id = import_id.clone();
-                            let import_id_clone = import_id.clone();
-                            into_future_trait(
-                                self.request_with_body(
-                                    route!(
-                                        "/upload/chunk/organizations/{organization_id}/id/{import_id}",
-                                        organization_id,
-                                        import_id
-                                    ),
-                                    hyper::Method::POST,
-                                    params!(
-                                        "filename" => file.file_name().to_string(),
-                                        "multipartId" => multipart_upload_id.to_string(),
-                                        "chunkChecksum" => file_chunk.checksum.0,
-                                        "chunkNumber" => (chunk_number + 1).to_string()
-                                    ),
-                                    hyper::Body::from(file_chunk.bytes),
-                                    vec![]
-                                ).and_then(
-                                    move |response: response::UploadResponse| {
-                                        if response.success {
-                                            future::ok(import_id_clone)
-                                        } else {
-                                            future::err(
-                                                bf::error::ErrorKind::UploadError(
-                                                    response.error.unwrap_or_else(|| {
-                                                        String::from("No error message supplied.")
-                                                    }),
-                                                ).into(),
-                                            )
-                                        }
-                                    },
+            let chunked_file_payload = if let Some(chunked_upload_properties) = file.chunked_upload() {
+                if env::var("BLACKFYNN_LOG_LEVEL").unwrap_or_else(|_| String::from("INFO")) == "DEBUG" {
+                    eprintln!(
+                        "[DEBUG] bf:upload_file_chunks<file = {file_name}> :: \
+                         Chunk size received from the upload service: {chunk_size}.",
+                        file_name = file.file_name(),
+                        chunk_size = chunked_upload_properties.chunk_size
+                    );
+                }
+
+                ChunkedFilePayload::new_with_chunk_size(
+                    import_id.clone(),
+                    file_path,
+                    chunked_upload_properties.chunk_size,
+                    progress_callback.clone(),
+                )
+            } else {
+                if env::var("BLACKFYNN_LOG_LEVEL").unwrap_or_else(|_| String::from("INFO")) == "DEBUG" {
+                    eprintln!(
+                        "[DEBUG] bf:upload_file_chunks<file = {file_name}> :: \
+                         No chunk size received from the upload service. \
+                         Falling back to default.",
+                        file_name = file.file_name()
+                    );
+                }
+                ChunkedFilePayload::new(
+                    import_id.clone(),
+                    file_path,
+                    progress_callback.clone(),
+                )
+            };
+
+            let bf = bf.clone();
+            let organization_id = organization_id.clone();
+            let import_id = import_id.clone();
+
+            chunked_file_payload
+                .map(move |file_chunk| {
+                    if let Some(MultipartUploadId(multipart_upload_id)) = file.multipart_upload_id() {
+                        let import_id = import_id.clone();
+                        let organization_id = organization_id.clone();
+                        println!("I think I'm requesting...");
+                        into_future_trait(
+                            bf.request_with_body(
+                                route!(
+                                    "/upload/chunk/organizations/{organization_id}/id/{import_id}",
+                                    organization_id,
+                                    import_id
                                 ),
+                                hyper::Method::POST,
+                                params!(
+                                    "filename" => file.file_name().to_string(),
+                                    "multipartId" => multipart_upload_id.to_string(),
+                                    "chunkChecksum" => file_chunk.checksum.0,
+                                    "chunkNumber" => (file_chunk.chunk_number + 1).to_string()
+                                ),
+                                hyper::Body::from(file_chunk.bytes),
+                                vec![]
+                            ).and_then(
+                                move |response: response::UploadResponse| {
+                                    if response.success {
+                                        future::ok(())
+                                    } else {
+                                        println!("failure");
+                                        future::err(
+                                            bf::error::ErrorKind::UploadError(
+                                                response.error.unwrap_or_else(|| {
+                                                    String::from("No error message supplied.")
+                                                }),
+                                            ).into(),
+                                        )
+                                    }
+                                }
                             )
-                        } else {
-                            into_future_trait(future::err(
-                                bf::error::ErrorKind::UploadError(
-                                    format!("No multipartId was provided for file: {}", file.file_name()),
-                                ).into(),
-                            ))
-                        }
+                        )
+                    } else {
+                        into_future_trait(future::err(
+                            bf::error::ErrorKind::UploadError(
+                                format!("No multipartId was provided for file: {}", file.file_name()),
+                            ).into(),
+                        ))
                     }
-                    Err(err) => into_future_trait(futures::failed(bf::Error::with_chain(
-                        err,
-                        "bf:upload_files:chunk",
-                    ))),
-                })
-            });
+                }.into_stream())
+                .flatten()
+        }).flatten();
 
-        into_stream_trait(stream::futures_unordered(fs))
+        into_stream_trait(fs)
     }
 
     /// Complete an upload to the upload service
@@ -1733,7 +1752,7 @@ mod tests {
                             &organization_id,
                             &import_id,
                             file_path,
-                            package.files(),
+                            package.files().to_vec(),
                             progress_indicator,
                         ).collect()
                         .map(|_| (bf_clone, dataset_id))

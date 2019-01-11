@@ -4,6 +4,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use sha2::{Sha256, Digest};
+use futures::Async::Ready;
+use tokio::prelude::{Stream, Async};
 
 use bf::api::client::progress::{ProgressCallback, ProgressUpdate};
 use bf::model::ImportId;
@@ -28,7 +30,9 @@ pub struct ChunkedFilePayload<C: ProgressCallback> {
 
 pub struct FileChunk {
     pub bytes: Vec<u8>,
-    pub checksum: Checksum
+    pub checksum: Checksum,
+    pub chunk_number: usize
+
 }
 
 impl<C: ProgressCallback> ChunkedFilePayload<C> {
@@ -75,23 +79,26 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
     }
 }
 
-impl<C> Iterator for ChunkedFilePayload<C>
+impl<C> Stream for ChunkedFilePayload<C>
 where
     C: 'static + ProgressCallback,
 {
-    type Item = Result<FileChunk, io::Error>;
+    type Item = FileChunk;
+    type Error = io::Error;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
+        println!("polled");
         let chunk = if self.file_size == 0 {
             // When the file size is 0, our iterator just needs to
             // send a single element with an empty buffer
             if self.parts_sent == 0 {
-                Ok(Some(FileChunk {
+                Ok(Ready(Some(FileChunk {
                     bytes: vec![],
-                    checksum: Checksum(String::from(EMPTY_SHA256_HASH))
-                }))
+                    checksum: Checksum(String::from(EMPTY_SHA256_HASH)),
+                    chunk_number: self.parts_sent
+                })))
             } else {
-                Ok(None)
+                Ok(Ready(None))
             }
         } else {
             let mut buffer = vec![0; self.chunk_size_bytes as usize];
@@ -109,12 +116,13 @@ where
                         let mut sha256_hasher = Sha256::new();
                         sha256_hasher.input(&buffer);
 
-                        Some(FileChunk {
+                        Ready(Some(FileChunk {
                             bytes: buffer,
-                            checksum: Checksum(format!("{:x}", sha256_hasher.result()))
-                        })
+                            checksum: Checksum(format!("{:x}", sha256_hasher.result())),
+                            chunk_number: self.parts_sent
+                        }))
                     } else {
-                        None
+                        Ready(None)
                     }
                 })
         };
@@ -130,10 +138,7 @@ where
         );
         self.progress_callback.on_update(&progress_update);
 
-        match chunk {
-            Ok(Some(chunk)) => Some(Ok(chunk)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
+        println!("sent");
+        chunk
     }
 }
