@@ -4,11 +4,9 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::fs::File;
 use std::{cmp, fs};
 
 use futures::*;
-use md5::{Md5, Digest};
 
 use bf::util::futures::{into_future_trait, into_stream_trait};
 use bf::{self, model};
@@ -162,7 +160,19 @@ pub struct Checksum(pub String);
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct MultipartUploadId(pub String);
 
-#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+impl From<String> for MultipartUploadId {
+    fn from(s: String) -> MultipartUploadId {
+        MultipartUploadId(s)
+    }
+}
+
+impl From<&MultipartUploadId> for String {
+    fn from(id: &MultipartUploadId) -> String {
+        id.0.to_string()
+    }
+}
+
+#[derive(Copy, Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunkedUploadProperties {
     pub chunk_size: u64,
@@ -176,7 +186,6 @@ pub struct S3File {
     file_name: String,
     upload_id: Option<UploadId>,
     size: u64,
-    checksum: Option<Checksum>,
     chunked_upload: Option<ChunkedUploadProperties>,
     multipart_upload_id: Option<MultipartUploadId>,
 }
@@ -195,30 +204,6 @@ fn file_chunks<P: AsRef<Path>>(
 }
 
 impl S3File {
-    fn md5sum<P: AsRef<Path>, Q: AsRef<Path>>(
-        path: P,
-        file: Q,
-    ) -> bf::Result<Checksum> {
-        let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
-        let mut file = File::open(file_path)?;
-        let mut md5_hasher = Md5::new();
-
-        loop {
-            // consume 100MB at a time
-            let mut buffer = vec![0; 100_000_000];
-            let bytes_read = file.read(&mut buffer)?;
-
-            if bytes_read > 0 {
-                buffer.truncate(bytes_read);
-                md5_hasher.input(buffer);
-            } else {
-                break;
-            }
-        }
-
-        Ok(Checksum(format!("{:x}", md5_hasher.result())))
-    }
-
     /// Given a file path, this function checks to see if the path:
     ///
     /// 1) exists
@@ -273,25 +258,6 @@ impl S3File {
             upload_id,
             file_name,
             size: metadata.len(),
-            checksum: None,
-            chunked_upload: None,
-            multipart_upload_id: None
-        })
-    }
-
-    pub fn new_with_checksum<P: AsRef<Path>, Q: AsRef<Path>>(
-        path: P,
-        file: Q,
-        upload_id: Option<UploadId>,
-    ) -> bf::Result<Self> {
-        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
-        let checksum = Self::md5sum(path, file)?;
-
-        Ok(Self {
-            upload_id,
-            file_name,
-            size: metadata.len(),
-            checksum: Some(checksum),
             chunked_upload: None,
             multipart_upload_id: None
         })
@@ -316,6 +282,37 @@ impl S3File {
             ))
         })?;
         S3File::new(path, file, upload_id)
+    }
+
+    #[allow(dead_code)]
+    pub fn with_chunk_size(
+        self,
+        chunk_size: Option<u64>
+    ) -> Self {
+        Self {
+            upload_id: self.upload_id.clone(),
+            file_name: self.file_name.clone(),
+            size: self.size,
+            chunked_upload: chunk_size.map(|c| ChunkedUploadProperties {
+                chunk_size: c,
+                total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
+            }),
+            multipart_upload_id: self.multipart_upload_id,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_multipart_upload_id(
+        self,
+        multipart_upload_id: Option<MultipartUploadId>
+    ) -> Self {
+        Self {
+            upload_id: self.upload_id.clone(),
+            file_name: self.file_name.clone(),
+            size: self.size,
+            chunked_upload: self.chunked_upload,
+            multipart_upload_id,
+        }
     }
 
     #[allow(dead_code)]
