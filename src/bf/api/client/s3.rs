@@ -96,7 +96,6 @@ struct MultipartUploadFile<C: ProgressCallback> {
 impl<C> MultipartUploadFile<C>
 where
     C: 'static + ProgressCallback + Clone,
-
 {
     #[allow(clippy::too_many_arguments)]
     fn new(

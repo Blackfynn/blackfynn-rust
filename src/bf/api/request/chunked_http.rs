@@ -12,8 +12,8 @@ use bf::api::response::FileMissingParts;
 use bf::model::upload::Checksum;
 use bf::model::ImportId;
 
-// 1MB
-const DEFAULT_CHUNK_SIZE_BYTES: u64 = 1000 * 1000;
+// 5MiB (the minimum part size for s3 multipart requests)
+const DEFAULT_CHUNK_SIZE_BYTES: u64 = 5242880;
 
 // SHA256 hash of an empty byte array
 const EMPTY_SHA256_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
