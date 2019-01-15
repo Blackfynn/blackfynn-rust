@@ -12,7 +12,7 @@ mod package;
 mod property;
 mod security;
 mod team;
-mod upload;
+pub mod upload;
 mod user;
 
 // Re-export

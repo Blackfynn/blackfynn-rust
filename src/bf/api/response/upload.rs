@@ -44,6 +44,21 @@ impl IntoIterator for UploadPreview {
     }
 }
 
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMissingParts {
+    pub file_name: String,
+    pub missing_parts: Vec<usize>,
+    pub expected_total_parts: usize
+}
+
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesMissingParts {
+    pub files: Vec<FileMissingParts>
+}
+
+
 /// A manifest of files uploaded to the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifests(Vec<model::ManifestEntry>);

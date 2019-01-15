@@ -154,6 +154,31 @@ impl S3FileChunk {
     }
 }
 
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct Checksum(pub String);
+
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct MultipartUploadId(pub String);
+
+impl From<String> for MultipartUploadId {
+    fn from(s: String) -> MultipartUploadId {
+        MultipartUploadId(s)
+    }
+}
+
+impl From<&MultipartUploadId> for String {
+    fn from(id: &MultipartUploadId) -> String {
+        id.0.to_string()
+    }
+}
+
+#[derive(Copy, Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkedUploadProperties {
+    pub chunk_size: u64,
+    total_chunks: usize
+}
+
 /// A type representing a file to be uploaded.
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +186,8 @@ pub struct S3File {
     file_name: String,
     upload_id: Option<UploadId>,
     size: u64,
+    chunked_upload: Option<ChunkedUploadProperties>,
+    multipart_upload_id: Option<MultipartUploadId>,
 }
 
 fn file_chunks<P: AsRef<Path>>(
@@ -225,11 +252,14 @@ impl S3File {
         file: Q,
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
-        let (file_name, metadata) = Self::normalize(path, file)?;
+        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+
         Ok(Self {
             upload_id,
             file_name,
             size: metadata.len(),
+            chunked_upload: None,
+            multipart_upload_id: None
         })
     }
 
@@ -255,6 +285,42 @@ impl S3File {
     }
 
     #[allow(dead_code)]
+    pub fn with_chunk_size(
+        self,
+        chunk_size: Option<u64>
+    ) -> Self {
+        Self {
+            upload_id: self.upload_id.clone(),
+            file_name: self.file_name.clone(),
+            size: self.size,
+            chunked_upload: chunk_size.map(|c| ChunkedUploadProperties {
+                chunk_size: c,
+                total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
+            }),
+            multipart_upload_id: self.multipart_upload_id,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_multipart_upload_id(
+        self,
+        multipart_upload_id: Option<MultipartUploadId>
+    ) -> Self {
+        Self {
+            upload_id: self.upload_id.clone(),
+            file_name: self.file_name.clone(),
+            size: self.size,
+            chunked_upload: self.chunked_upload,
+            multipart_upload_id,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn chunked_upload(&self) -> Option<&ChunkedUploadProperties> {
+        self.chunked_upload.as_ref()
+    }
+
+    #[allow(dead_code)]
     pub fn file_name(&self) -> &String {
         &self.file_name
     }
@@ -262,6 +328,11 @@ impl S3File {
     #[allow(dead_code)]
     pub fn upload_id(&self) -> Option<&UploadId> {
         self.upload_id.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub fn multipart_upload_id(&self) -> Option<&MultipartUploadId> {
+        self.multipart_upload_id.as_ref()
     }
 
     #[allow(dead_code)]
