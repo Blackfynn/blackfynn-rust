@@ -635,6 +635,7 @@ impl Blackfynn {
     }
 
     /// Grant temporary upload access to the specific dataset for the current session.
+    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
     pub fn grant_upload(&self, id: DatasetId) -> bf::Future<response::UploadCredential> {
         get!(self, route!("/security/user/credentials/upload/{id}", id))
     }
@@ -645,6 +646,7 @@ impl Blackfynn {
     }
 
     /// Generate a preview of the files to be uploaded.
+    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
     pub fn preview_upload<P, Q>(
         &self,
         path: P,
@@ -677,6 +679,7 @@ impl Blackfynn {
     }
 
     /// Get a S3 uploader.
+    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
     pub fn s3_uploader(&self, creds: TemporaryCredential) -> bf::Result<S3Uploader> {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(
@@ -693,6 +696,7 @@ impl Blackfynn {
     }
 
     /// Completes the file upload process.
+    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
     pub fn complete_upload(
         &self,
         import_id: &ImportId,
