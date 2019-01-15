@@ -92,7 +92,7 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
                     .iter()
                     .cloned()
                     .fold(0, usize::max)
-                    == missing_parts.expected_total_parts;
+                    == missing_parts.expected_total_parts - 1;
                 let bytes_sent = if missing_final_chunk {
                     parts_sent as u64 * chunk_size_bytes
                 } else {
@@ -212,16 +212,12 @@ mod tests {
 
     use futures::Future;
 
-    // this file should be big enough to provide at least 3 chunks at
-    // DEFAULT_CHUNK_SIZE_BYTES
-    fn test_file() -> String {
-        client::tests::BIG_TEST_FILES[0].clone()
-    }
+    const TEST_FILE_NAME: &str = "earth.jpg";
 
     fn test_file_path() -> PathBuf {
         let mut test_file_path =
-            path::Path::new(&client::tests::BIG_TEST_DATA_DIR.to_string()).to_path_buf();
-        test_file_path.push(test_file());
+            path::Path::new(&client::tests::MEDIUM_TEST_DATA_DIR.to_string()).to_path_buf();
+        test_file_path.push(TEST_FILE_NAME);
         test_file_path
     }
 
@@ -230,9 +226,10 @@ mod tests {
     }
 
     fn chunked_payload() -> ChunkedFilePayload<client::tests::ProgressIndicator> {
-        ChunkedFilePayload::new(
+        ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
+            1000 * 1000, // 1mb
             None,
             progress_indicator(),
         )
@@ -241,9 +238,10 @@ mod tests {
     fn chunked_payload_missing_parts(
         missing_parts: FileMissingParts,
     ) -> ChunkedFilePayload<client::tests::ProgressIndicator> {
-        ChunkedFilePayload::new(
+        ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
+            1000 * 1000, // 1mb
             Some(missing_parts),
             progress_indicator(),
         )
@@ -318,8 +316,8 @@ mod tests {
     #[test]
     fn missing_parts_are_sorted() {
         let missing_parts = FileMissingParts {
-            file_name: test_file(),
-            missing_parts: vec![2, 1],
+            file_name: TEST_FILE_NAME.to_string(),
+            missing_parts: vec![1, 0],
             expected_total_parts: 8,
         };
 
@@ -331,8 +329,8 @@ mod tests {
     #[test]
     fn parts_and_bytes_sent_are_calculated_for_missing_parts_file_ending() {
         let missing_parts = FileMissingParts {
-            file_name: test_file(),
-            missing_parts: vec![2, 1],
+            file_name: TEST_FILE_NAME.to_string(),
+            missing_parts: vec![1, 0],
             expected_total_parts: 8,
         };
 
@@ -347,14 +345,13 @@ mod tests {
     }
 
     #[test]
-    fn file_size_is_calculated_for_missing_parts() {
+    fn parts_and_bytes_sent_are_calculated_for_missing_parts() {
         let missing_parts = FileMissingParts {
-            file_name: test_file(),
-            missing_parts: vec![7, 8],
+            file_name: TEST_FILE_NAME.to_string(),
+            missing_parts: vec![6, 7],
             expected_total_parts: 8,
         };
         let chunked_payload = chunked_payload_missing_parts(missing_parts);
-
         assert!(chunked_payload.parts_sent == 6);
         assert!(chunked_payload.bytes_sent == (chunked_payload.chunk_size_bytes * 6));
     }
@@ -362,8 +359,8 @@ mod tests {
     #[test]
     fn only_missing_parts_are_sent() {
         let missing_parts = FileMissingParts {
-            file_name: test_file(),
-            missing_parts: vec![3, 4, 5, 8],
+            file_name: TEST_FILE_NAME.to_string(),
+            missing_parts: vec![3, 4, 5, 7],
             expected_total_parts: 8,
         };
 

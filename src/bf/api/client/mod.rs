@@ -79,7 +79,7 @@ macro_rules! bf_debug {
         if env::var("BLACKFYNN_LOG_LEVEL").unwrap_or_else(|_| String::from("INFO"))
             == "DEBUG"
         {
-            eprintln!($msg, $($var = $value),*)
+            eprintln!("[DEBUG] {}", format!($msg, $($var = $value),*))
         }
     }
 }
@@ -348,7 +348,7 @@ impl Blackfynn {
                     )
                     .and_then(move |body: hyper::Chunk| {
                         bf_debug!(
-                            "[DEBUG] bf:request<{method}:{url}>:serialize:payload = {payload}",
+                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
                             method = method_string_clone,
                             url = url_string_clone,
                             payload = Self::chunk_to_string(&body)
@@ -396,7 +396,10 @@ impl Blackfynn {
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(runner(self.clone()))
+        rt.block_on(runner(self.clone())).map(|result|{
+            rt.shutdown_now();
+            result
+        })
     }
 
     /// Test if the user is logged into the Blackfynn platform.
@@ -794,7 +797,7 @@ impl Blackfynn {
             let chunked_file_payload =
                 if let Some(chunked_upload_properties) = file.chunked_upload() {
                     bf_debug!(
-                        "[DEBUG] bf:upload_file_chunks<file = {file_name}> :: \
+                        "bf:upload_file_chunks<file = {file_name}> :: \
                          Chunk size received from the upload service: {chunk_size}.",
                         file_name = file.file_name(),
                         chunk_size = chunked_upload_properties.chunk_size
@@ -809,7 +812,7 @@ impl Blackfynn {
                     )
                 } else {
                     bf_debug!(
-                        "[DEBUG] bf:upload_file_chunks<file = {file_name}> :: \
+                        "bf:upload_file_chunks<file = {file_name}> :: \
                          No chunk size received from the upload service. \
                          Falling back to default.",
                         file_name = file.file_name()
@@ -1012,13 +1015,13 @@ impl Blackfynn {
 
                         ld_err.failed = true;
 
-                        bf_debug!("Upload encountered an error: {error}", error = err.description());
+                        bf_debug!("Upload encountered an error: {error}", error = err);
                         bf_debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
                         thread::sleep(time::Duration::from_millis(delay as u64));
                         bf_debug!(
-                            "Attempting to resume missing parts. Attempt {try_num}/{retries})...\n\n",
+                            "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
                             try_num = ld_err.try_num, retries = max_retries
                         );
                         future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, bf::Error>(
@@ -1097,6 +1100,8 @@ pub mod tests {
         static ref TEST_DATA_DIR: String = test_data_dir("/small");
         pub static ref BIG_TEST_FILES: Vec<String> = test_data_files("/big");
         pub static ref BIG_TEST_DATA_DIR: String = test_data_dir("/big");
+        pub static ref MEDIUM_TEST_FILES: Vec<String> = test_data_files("/medium");
+        pub static ref MEDIUM_TEST_DATA_DIR: String = test_data_dir("/medium");
     }
 
     struct Inner(sync::Mutex<bool>);
@@ -1979,8 +1984,8 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        (*BIG_TEST_DATA_DIR).to_string(),
-                        &*BIG_TEST_FILES,
+                        (*MEDIUM_TEST_DATA_DIR).to_string(),
+                        &*MEDIUM_TEST_FILES,
                         false,
                     )
                     .map(|preview| (bf, dataset_id, organization_id, preview))
@@ -2000,7 +2005,7 @@ pub mod tests {
                         let dataset_id = dataset_id.clone();
                         let package = package.clone();
 
-                        let file_path = path::Path::new(&BIG_TEST_DATA_DIR.to_string())
+                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
                             .to_path_buf()
                             .canonicalize()
                             .unwrap();
@@ -2109,8 +2114,8 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        (*BIG_TEST_DATA_DIR).to_string(),
-                        &*BIG_TEST_FILES,
+                        (*MEDIUM_TEST_DATA_DIR).to_string(),
+                        &*MEDIUM_TEST_FILES,
                         false,
                     )
                     .map(|preview| (bf, dataset_id, organization_id, preview))
@@ -2130,7 +2135,7 @@ pub mod tests {
                         let dataset_id = dataset_id.clone();
                         let package = package.clone();
 
-                        let file_path = path::Path::new(&BIG_TEST_DATA_DIR.to_string())
+                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
                             .to_path_buf()
                             .canonicalize()
                             .unwrap();
@@ -2172,5 +2177,4 @@ pub mod tests {
             panic!();
         }
     }
-
 }
