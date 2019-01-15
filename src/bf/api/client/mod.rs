@@ -13,7 +13,7 @@ use std::borrow::Borrow;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::{iter, thread, time};
+use std::{iter, time};
 
 use futures::*;
 
@@ -215,7 +215,7 @@ impl Blackfynn {
                     .map(Into::into)
                     .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
             })
-            .unwrap_or(Ok(hyper::Body::empty()))
+            .unwrap_or_else(|| Ok(hyper::Body::empty()))
             .map_err(Into::into);
 
         match serialized_payload {
@@ -369,36 +369,6 @@ impl Blackfynn {
             });
 
         into_future_trait(f)
-    }
-
-    ///
-    ///# Example
-    ///
-    ///  ```rust,ignore
-    ///  extern crate blackfynn;
-    ///
-    ///  fn main() {
-    ///    use blackfynn::{Blackfynn, Config, Environment};
-    ///
-    ///    let config = Config::new(Environment::Development);
-    ///    let result = Blackfynn::run(&config, move |ref bf| {
-    ///      // Not logged in
-    ///      into_future_trait(bf.organizations())
-    ///    });
-    ///    assert!(result.is_err());
-    ///  }
-    ///  ```
-    ///
-    #[allow(dead_code)]
-    fn run<F, T>(&self, runner: F) -> bf::Result<T>
-    where
-        F: Fn(Blackfynn) -> bf::Future<T>,
-        T: 'static + Send,
-    {
-        let mut rt = tokio::runtime::Runtime::new()?;
-        let result = rt.block_on(runner(self.clone()));
-        rt.shutdown_on_idle();
-        result
     }
 
     /// Test if the user is logged into the Blackfynn platform.
@@ -635,7 +605,10 @@ impl Blackfynn {
     }
 
     /// Grant temporary upload access to the specific dataset for the current session.
-    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
+    #[deprecated(
+        since = "0.4.0",
+        note = "please upload using the upload service instead"
+    )]
     pub fn grant_upload(&self, id: DatasetId) -> bf::Future<response::UploadCredential> {
         get!(self, route!("/security/user/credentials/upload/{id}", id))
     }
@@ -646,7 +619,10 @@ impl Blackfynn {
     }
 
     /// Generate a preview of the files to be uploaded.
-    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
+    #[deprecated(
+        since = "0.4.0",
+        note = "please upload using the upload service instead"
+    )]
     pub fn preview_upload<P, Q>(
         &self,
         path: P,
@@ -679,7 +655,10 @@ impl Blackfynn {
     }
 
     /// Get a S3 uploader.
-    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
+    #[deprecated(
+        since = "0.4.0",
+        note = "please upload using the upload service instead"
+    )]
     pub fn s3_uploader(&self, creds: TemporaryCredential) -> bf::Result<S3Uploader> {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(
@@ -696,7 +675,10 @@ impl Blackfynn {
     }
 
     /// Completes the file upload process.
-    #[deprecated(since="0.4.0", note="please upload using the upload service instead")]
+    #[deprecated(
+        since = "0.4.0",
+        note = "please upload using the upload service instead"
+    )]
     pub fn complete_upload(
         &self,
         import_id: &ImportId,
@@ -810,7 +792,7 @@ impl Blackfynn {
                         import_id.clone(),
                         file_path,
                         chunked_upload_properties.chunk_size,
-                        file_missing_parts,
+                        file_missing_parts.as_ref(),
                         progress_callback.clone(),
                     )
                 } else {
@@ -823,7 +805,7 @@ impl Blackfynn {
                     ChunkedFilePayload::new(
                         import_id.clone(),
                         file_path,
-                        file_missing_parts,
+                        file_missing_parts.as_ref(),
                         progress_callback.clone(),
                     )
                 };
@@ -939,7 +921,7 @@ impl Blackfynn {
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
-        path: P,
+        path: &P,
         files: Vec<model::S3File>,
         progress_callback: C,
         parallelism: usize,
@@ -1022,18 +1004,23 @@ impl Blackfynn {
                         bf_debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
-                        thread::sleep(time::Duration::from_millis(delay as u64));
-                        bf_debug!(
-                            "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
-                            try_num = ld_err.try_num, retries = max_retries
-                        );
-                        future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, bf::Error>(
-                            future::Loop::Continue(ld_err),
-                        )
+                        let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
+                        let continue_loop = tokio::timer::Delay::new(deadline)
+                            .map_err(|e| {
+                                bf::Error::with_chain(e, "bf:upload_file_chunks_to_upload_service_retries :: Error during timeout")
+                            })
+                            .map(move |_| {
+                                bf_debug!(
+                                    "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
+                                    try_num = ld_err.try_num, retries = max_retries
+                                );
+                                future::Loop::Continue(ld_err)
+                            });
+                        into_future_trait(continue_loop)
                     } else {
-                        future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, bf::Error>(
+                        into_future_trait(future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, bf::Error>(
                             future::Loop::Break(ld_err),
-                        )
+                        ))
                     }
                 })
         })
@@ -1107,6 +1094,19 @@ pub mod tests {
         pub static ref MEDIUM_TEST_DATA_DIR: String = test_data_dir("/medium");
     }
 
+    /// given a 'runner' function, run the given Blackfynn instance
+    /// through that function and block until completion
+    fn run<F, T>(bf: &Blackfynn, runner: F) -> bf::Result<T>
+    where
+        F: Fn(Blackfynn) -> bf::Future<T>,
+        T: 'static + Send,
+    {
+        let mut rt = tokio::runtime::Runtime::new()?;
+        let result = rt.block_on(runner(bf.clone()));
+        rt.shutdown_on_idle();
+        result
+    }
+
     struct Inner(sync::Mutex<bool>);
 
     impl Inner {
@@ -1168,7 +1168,7 @@ pub mod tests {
     #[test]
     fn login_successfully_locally() {
         let bf = bf();
-        let result = bf.run(move |bf| bf.login(TEST_API_KEY, TEST_SECRET_KEY));
+        let result = run(&bf, move |bf| bf.login(TEST_API_KEY, TEST_SECRET_KEY));
         assert!(result.is_ok());
         assert!(bf.session_token().is_some());
     }
@@ -1176,14 +1176,14 @@ pub mod tests {
     #[test]
     fn login_fails_locally() {
         let bf = bf();
-        let result = bf.run(move |bf| bf.login(TEST_API_KEY, "this-is-a-bad-secret"));
+        let result = run(&bf, move |bf| bf.login(TEST_API_KEY, "this-is-a-bad-secret"));
         assert!(result.is_err());
         assert!(bf.session_token().is_none());
     }
 
     #[test]
     fn fetching_organizations_after_login_is_successful() {
-        let org = bf().run(move |bf| {
+        let org = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_organizations()),
@@ -1197,7 +1197,7 @@ pub mod tests {
 
     #[test]
     fn fetching_user_after_login_is_successful() {
-        let user = bf().run(move |bf| {
+        let user = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_user()),
@@ -1211,7 +1211,7 @@ pub mod tests {
 
     #[test]
     fn updating_org_after_login_is_successful() {
-        let user = bf().run(move |bf| {
+        let user = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_user().map(|user| (user, bf)))
@@ -1230,7 +1230,7 @@ pub mod tests {
 
     #[test]
     fn fetching_organizations_fails_if_login_fails() {
-        let org = bf().run(move |bf| {
+        let org = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, "another-bad-secret")
                     .and_then(move |_| bf.get_organizations()),
@@ -1242,7 +1242,7 @@ pub mod tests {
 
     #[test]
     fn fetching_organization_by_id_is_successful() {
-        let org = bf().run(move |bf| {
+        let org = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
                 bf.get_organization_by_id(OrganizationId::new(FIXTURE_ORGANIZATION))
             }))
@@ -1255,7 +1255,7 @@ pub mod tests {
 
     #[test]
     fn fetching_datasets_after_login_is_successful() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_datasets()),
@@ -1269,13 +1269,13 @@ pub mod tests {
 
     #[test]
     fn fetching_datasets_fails_if_login_fails() {
-        let ds = bf().run(move |bf| into_future_trait(bf.get_datasets()));
+        let ds = run(&bf(), move |bf| into_future_trait(bf.get_datasets()));
         assert!(ds.is_err());
     }
 
     #[test]
     fn fetching_dataset_by_id_successful_if_logged_in_and_exists() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
@@ -1289,7 +1289,7 @@ pub mod tests {
 
     #[test]
     fn fetching_dataset_by_name_successful_if_logged_in_and_exists() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
@@ -1303,7 +1303,7 @@ pub mod tests {
 
     #[test]
     fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_id() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_id(FIXTURE_DATASET.into())),
@@ -1314,12 +1314,15 @@ pub mod tests {
             panic!("{}", ds.unwrap_err().display_chain().to_string());
         }
 
-        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+        assert!(ds
+            .unwrap()
+            .get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE))
+            .is_some());
     }
 
     #[test]
     fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_id() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_id(FIXTURE_DATASET.into())),
@@ -1338,7 +1341,7 @@ pub mod tests {
 
     #[test]
     fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_name() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
@@ -1349,12 +1352,15 @@ pub mod tests {
             panic!("{}", ds.unwrap_err().display_chain().to_string());
         }
 
-        assert!(ds.unwrap().get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE)).is_some());
+        assert!(ds
+            .unwrap()
+            .get_package_by_id(Into::<model::PackageId>::into(FIXTURE_PACKAGE))
+            .is_some());
     }
 
     #[test]
     fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_name() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
@@ -1373,7 +1379,7 @@ pub mod tests {
 
     #[test]
     fn fetching_child_dataset_fails_if_it_does_not_exists() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
@@ -1389,7 +1395,7 @@ pub mod tests {
 
     #[test]
     fn fetching_dataset_by_name_fails_if_it_does_not_exist() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name("doesnotexist")),
@@ -1401,7 +1407,7 @@ pub mod tests {
 
     #[test]
     fn fetching_package_by_id_successful_if_logged_in_and_exists() {
-        let package = bf().run(move |bf| {
+        let package = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_package_by_id(PackageId::new(FIXTURE_PACKAGE))),
@@ -1414,7 +1420,7 @@ pub mod tests {
 
     #[test]
     fn fetching_package_by_id_invalid_if_logged_in_and_exists() {
-        let package = bf().run(move |bf| {
+        let package = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_package_by_id(PackageId::new("invalid_package_id"))),
@@ -1434,7 +1440,7 @@ pub mod tests {
 
     #[test]
     fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
-        let ds = bf().run(move |bf| {
+        let ds = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
                 bf.get_dataset_by_id(DatasetId::new(
                     "N:dataset:not-real-6803-4a67-bf20-83076774a5c7",
@@ -1446,7 +1452,7 @@ pub mod tests {
 
     #[test]
     fn fetch_members() {
-        let members = bf().run(move |bf| {
+        let members = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_user().map(|user| (user, bf)))
@@ -1462,7 +1468,7 @@ pub mod tests {
 
     #[test]
     fn fetch_teams() {
-        let teams = bf().run(move |bf| {
+        let teams = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_user().map(|user| (user, bf)))
@@ -1478,7 +1484,7 @@ pub mod tests {
 
     #[test]
     fn creating_then_updating_then_delete_dataset_successful() {
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
@@ -1522,7 +1528,7 @@ pub mod tests {
 
     #[test]
     fn creating_then_updating_then_delete_package_successful() {
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
@@ -1566,7 +1572,7 @@ pub mod tests {
 
     #[test]
     fn fetching_upload_credential_granting_works() {
-        let cred = bf().run(move |bf| {
+        let cred = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.grant_upload(DatasetId::new(FIXTURE_DATASET))),
@@ -1579,7 +1585,7 @@ pub mod tests {
 
     #[test]
     fn preview_upload_file_working() {
-        let preview = bf().run(move |bf| {
+        let preview = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false)),
@@ -1637,7 +1643,7 @@ pub mod tests {
 
     #[test]
     fn simple_file_uploading() {
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let f =
                 create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
                     .and_then(move |(scaffold, bf)| {
@@ -1699,7 +1705,7 @@ pub mod tests {
 
     #[test]
     fn multipart_file_uploading() {
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let bf_clone = bf.clone();
             let f =
                 create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
@@ -1774,7 +1780,7 @@ pub mod tests {
     fn multipart_big_file_uploading() {
         let cb = ProgressIndicator::new();
 
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let cb = cb.clone();
 
             let f = create_upload_scaffold(
@@ -1876,7 +1882,7 @@ pub mod tests {
     #[test]
     fn upload_using_upload_service() {
         // create upload
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
@@ -1965,7 +1971,7 @@ pub mod tests {
     #[test]
     fn upload_missing_parts_using_upload_service() {
         // create upload
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
@@ -2037,9 +2043,7 @@ pub mod tests {
                             1,
                         )
                         .collect()
-                        .map(|_| {
-                            (bf_clone, dataset_id)
-                        })
+                        .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
                             bf.get_upload_status_using_upload_service(&organization_id, &import_id)
                                 .map(|status| (bf, dataset_id, organization_id, import_id, status))
@@ -2057,9 +2061,7 @@ pub mod tests {
                                     1,
                                 )
                                 .collect()
-                                .map(|_| {
-                                    (bf, dataset_id, organization_id, import_id)
-                                })
+                                .map(|_| (bf, dataset_id, organization_id, import_id))
                             },
                         )
                         .and_then(
@@ -2092,7 +2094,7 @@ pub mod tests {
     #[test]
     fn upload_to_upload_service_with_retries() {
         // create upload
-        let result = bf().run(move |bf| {
+        let result = run(&bf(), move |bf| {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
@@ -2146,7 +2148,7 @@ pub mod tests {
                         bf.upload_file_chunks_to_upload_service_retries(
                             &organization_id,
                             &import_id,
-                            file_path.clone(),
+                            &file_path,
                             package.files().to_vec(),
                             progress_indicator.clone(),
                             1,

@@ -13,12 +13,12 @@ use bf::model::upload::Checksum;
 use bf::model::ImportId;
 
 // 5MiB (the minimum part size for s3 multipart requests)
-const DEFAULT_CHUNK_SIZE_BYTES: u64 = 5242880;
+const DEFAULT_CHUNK_SIZE_BYTES: u64 = 5_242_880;
 
 // SHA256 hash of an empty byte array
 const EMPTY_SHA256_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-pub struct ChunkedFilePayload<C: ProgressCallback> {
+pub struct ChunkedFilePayload {
     import_id: ImportId,
     file_path: PathBuf,
     file: File,
@@ -26,9 +26,9 @@ pub struct ChunkedFilePayload<C: ProgressCallback> {
     bytes_sent: u64,
     file_size: u64,
     parts_sent: usize,
-    total_expected_parts: usize,
+    expected_total_parts: Option<usize>,
     missing_parts: Vec<usize>,
-    progress_callback: C,
+    progress_callback: Box<dyn ProgressCallback>,
 }
 
 pub struct FileChunk {
@@ -37,15 +37,16 @@ pub struct FileChunk {
     pub chunk_number: usize,
 }
 
-impl<C: ProgressCallback> ChunkedFilePayload<C> {
-    pub fn new<P>(
+impl ChunkedFilePayload {
+    pub fn new<P, C>(
         import_id: ImportId,
         file_path: P,
-        missing_parts: Option<FileMissingParts>,
+        missing_parts: Option<&FileMissingParts>,
         progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
+        C: 'static + ProgressCallback
     {
         Self::new_with_chunk_size(
             import_id,
@@ -56,21 +57,21 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
         )
     }
 
-    pub fn new_with_chunk_size<P>(
+    pub fn new_with_chunk_size<P, C>(
         import_id: ImportId,
         file_path: P,
         chunk_size_bytes: u64,
-        missing_parts: Option<FileMissingParts>,
+        missing_parts: Option<&FileMissingParts>,
         progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
+        C: 'static + ProgressCallback
     {
         // ensure missing parts are sorted
         let mut sorted_missing_parts = missing_parts
             .iter()
-            .cloned()
-            .map(|mp| mp.missing_parts)
+            .map(|mp| mp.missing_parts.clone())
             .next()
             .unwrap_or_else(|| vec![]);
         sorted_missing_parts.sort_unstable();
@@ -79,14 +80,13 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
 
         let file = File::open(file_path.clone()).unwrap();
         let file_size = file.metadata().unwrap().len();
-        let total_expected_parts =
-            (file_size as f64 / chunk_size_bytes as f64).floor() as usize + 1;
 
         // update the 'parts_sent' and 'bytes_sent' to reflect any
         // parts that were already sent based on missing_parts
-        let (parts_sent, bytes_sent) = match missing_parts {
+        let (parts_sent, bytes_sent, expected_total_parts) = match missing_parts {
             Some(ref missing_parts) => {
-                let parts_sent = total_expected_parts - missing_parts.missing_parts.len();
+                let parts_sent =
+                    missing_parts.expected_total_parts - missing_parts.missing_parts.len();
                 let missing_final_chunk = missing_parts
                     .missing_parts
                     .iter()
@@ -99,9 +99,13 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
                     let final_chunk_size = file_size % chunk_size_bytes;
                     ((parts_sent - 1) as u64 * chunk_size_bytes) + final_chunk_size as u64
                 };
-                (parts_sent, bytes_sent)
+                (
+                    parts_sent,
+                    bytes_sent,
+                    Some(missing_parts.expected_total_parts),
+                )
             }
-            None => (0, 0),
+            None => (0, 0, None),
         };
 
         let payload = Self {
@@ -112,9 +116,9 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
             bytes_sent,
             file_size,
             parts_sent,
-            total_expected_parts,
+            expected_total_parts,
             missing_parts: sorted_missing_parts,
-            progress_callback,
+            progress_callback: Box::new(progress_callback),
         };
 
         payload.update_progress_callback();
@@ -135,9 +139,7 @@ impl<C: ProgressCallback> ChunkedFilePayload<C> {
     }
 }
 
-impl<C> Stream for ChunkedFilePayload<C>
-where
-    C: 'static + ProgressCallback,
+impl Stream for ChunkedFilePayload
 {
     type Item = FileChunk;
     type Error = io::Error;
@@ -156,18 +158,26 @@ where
             } else {
                 Ok(Ready(None))
             }
-        } else if self.total_expected_parts == self.parts_sent {
+        } else if self.expected_total_parts == Some(self.parts_sent) {
             Ok(Ready(None))
         } else {
             let mut buffer = vec![0; self.chunk_size_bytes as usize];
 
-            // if there are missing parts, only seek to those chunks
-            let mut seek_from_chunk_number = if self.missing_parts.is_empty() {
-                self.parts_sent
-            } else {
-                self.missing_parts[((self.parts_sent as isize - self.total_expected_parts as isize)
-                    + self.missing_parts.len() as isize)
-                    as usize]
+            // if expected_total_parts is not defined, the upload
+            // service has not given any information about this
+            // upload.  by default, assume all chunks are required.
+            let mut seek_from_chunk_number = match self.expected_total_parts {
+                None => self.parts_sent,
+                Some(expected_total_parts) => {
+                    if self.missing_parts.is_empty() {
+                        self.parts_sent
+                    } else {
+                        self.missing_parts[((self.parts_sent as isize
+                            - expected_total_parts as isize)
+                            + self.missing_parts.len() as isize)
+                            as usize]
+                    }
+                }
             };
 
             self.file
@@ -225,7 +235,7 @@ mod tests {
         client::tests::ProgressIndicator::new()
     }
 
-    fn chunked_payload() -> ChunkedFilePayload<client::tests::ProgressIndicator> {
+    fn chunked_payload() -> ChunkedFilePayload {
         ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
@@ -236,8 +246,8 @@ mod tests {
     }
 
     fn chunked_payload_missing_parts(
-        missing_parts: FileMissingParts,
-    ) -> ChunkedFilePayload<client::tests::ProgressIndicator> {
+        missing_parts: &FileMissingParts,
+    ) -> ChunkedFilePayload {
         ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
@@ -248,7 +258,7 @@ mod tests {
     }
 
     fn chunks(
-        payload: &mut ChunkedFilePayload<client::tests::ProgressIndicator>,
+        payload: &mut ChunkedFilePayload,
     ) -> Vec<FileChunk> {
         payload.collect().wait().unwrap()
     }
@@ -321,7 +331,7 @@ mod tests {
             expected_total_parts: 8,
         };
 
-        let chunked_payload = chunked_payload_missing_parts(missing_parts);
+        let chunked_payload = chunked_payload_missing_parts(&missing_parts);
 
         assert!(chunked_payload.missing_parts == vec![0, 1]);
     }
@@ -334,7 +344,7 @@ mod tests {
             expected_total_parts: 8,
         };
 
-        let chunked_payload = chunked_payload_missing_parts(missing_parts);
+        let chunked_payload = chunked_payload_missing_parts(&missing_parts);
 
         assert!(chunked_payload.parts_sent == 6);
         assert!(
@@ -351,7 +361,7 @@ mod tests {
             missing_parts: vec![6, 7],
             expected_total_parts: 8,
         };
-        let chunked_payload = chunked_payload_missing_parts(missing_parts);
+        let chunked_payload = chunked_payload_missing_parts(&missing_parts);
         assert!(chunked_payload.parts_sent == 6);
         assert!(chunked_payload.bytes_sent == (chunked_payload.chunk_size_bytes * 6));
     }
@@ -364,7 +374,7 @@ mod tests {
             expected_total_parts: 8,
         };
 
-        let mut chunked_payload = chunked_payload_missing_parts(missing_parts);
+        let mut chunked_payload = chunked_payload_missing_parts(&missing_parts);
 
         let chunks = chunks(chunked_payload.by_ref());
         assert!(chunks.len() == 4);
