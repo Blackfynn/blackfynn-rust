@@ -396,10 +396,9 @@ impl Blackfynn {
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(runner(self.clone())).map(|result|{
-            rt.shutdown_now();
-            result
-        })
+        let result = rt.block_on(runner(self.clone()));
+        rt.shutdown_on_idle();
+        result
     }
 
     /// Test if the user is logged into the Blackfynn platform.
@@ -2035,7 +2034,6 @@ pub mod tests {
                         )
                         .collect()
                         .map(|_| {
-                            println!("Uploaded first set of chunks...");
                             (bf_clone, dataset_id)
                         })
                         .and_then(move |(bf, dataset_id)| {
@@ -2056,14 +2054,12 @@ pub mod tests {
                                 )
                                 .collect()
                                 .map(|_| {
-                                    println!("Uploaded second set of chunks");
                                     (bf, dataset_id, organization_id, import_id)
                                 })
                             },
                         )
                         .and_then(
                             move |(bf, dataset_id, organization_id, import_id)| {
-                                println!("Completing...");
                                 bf.complete_upload_using_upload_service(
                                     &organization_id,
                                     &import_id,
