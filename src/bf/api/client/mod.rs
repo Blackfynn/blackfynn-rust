@@ -733,7 +733,8 @@ impl Blackfynn {
             self,
             route!(
                 "/upload/preview/organizations/{organization_id}?datasetId={dataset_id}",
-                organization_id
+                organization_id,
+                dataset_id
             ),
             params!("append" => if append { "true" } else { "false" }),
             &request::UploadPreview::new(&s3_files)
