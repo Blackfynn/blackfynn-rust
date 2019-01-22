@@ -1996,6 +1996,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2119,6 +2120,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
