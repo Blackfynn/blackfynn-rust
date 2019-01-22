@@ -707,6 +707,7 @@ impl Blackfynn {
     pub fn preview_upload_using_upload_service<P, Q>(
         &self,
         organization_id: &OrganizationId,
+        dataset_id: &DatasetId,
         path: P,
         files: &[Q],
         append: bool,
@@ -731,7 +732,7 @@ impl Blackfynn {
         post!(
             self,
             route!(
-                "/upload/preview/organizations/{organization_id}",
+                "/upload/preview/organizations/{organization_id}?datasetId={dataset_id}",
                 organization_id
             ),
             params!("append" => if append { "true" } else { "false" }),
