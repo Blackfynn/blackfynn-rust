@@ -1906,6 +1906,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
