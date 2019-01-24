@@ -707,6 +707,7 @@ impl Blackfynn {
     pub fn preview_upload_using_upload_service<P, Q>(
         &self,
         organization_id: &OrganizationId,
+        dataset_id: &DatasetId,
         path: P,
         files: &[Q],
         append: bool,
@@ -734,7 +735,10 @@ impl Blackfynn {
                 "/upload/preview/organizations/{organization_id}",
                 organization_id
             ),
-            params!("append" => if append { "true" } else { "false" }),
+            params!(
+                "append" => if append { "true" } else { "false" },
+                "datasetId" => dataset_id
+            ),
             &request::UploadPreview::new(&s3_files)
         )
     }
@@ -1077,11 +1081,11 @@ pub mod tests {
     const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:23f181ea-f605-430e-a192-7a244ccd838e";
+    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
     const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
 
     // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:48834c95-c66f-42d0-8c60-c51748b35120";
+    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
     const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
@@ -1904,6 +1908,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
@@ -1993,6 +1998,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2116,6 +2122,7 @@ pub mod tests {
                 .and_then(move |(bf, dataset_id, organization_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
+                        &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
