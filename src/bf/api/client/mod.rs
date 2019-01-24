@@ -1081,11 +1081,11 @@ pub mod tests {
     const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:23f181ea-f605-430e-a192-7a244ccd838e";
+    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
     const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
 
     // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:48834c95-c66f-42d0-8c60-c51748b35120";
+    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
     const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
