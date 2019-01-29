@@ -215,7 +215,8 @@ impl S3File {
         path: P,
         file: Q,
     ) -> bf::Result<(String, Option<String>, fs::Metadata)> {
-        let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
+        let directory_path = path.as_ref();
+        let file_path: PathBuf = directory_path.join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
@@ -240,11 +241,14 @@ impl S3File {
 
         let file_name = file_name?;
 
-        let cannonical_path = path.as_ref().canonicalize().map(|path| path.parent())?;
+        let parent_path = 
+            directory_path
+                .canonicalize()
+                .and_then(|cannonical_path| cannonical_path.parent().ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory")))?;
         
         let destination_path = 
             file_path
-                .strip_prefix(cannonical_path)
+                .strip_prefix(parent_path)
                 .ok()
                 .and_then(|path| path.to_str().map(|path_str| path_str.to_owned()));
 
