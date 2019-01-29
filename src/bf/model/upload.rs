@@ -241,10 +241,13 @@ impl S3File {
 
         let file_name = file_name?;
 
+        let directory_path_copy: PathBuf = directory_path.clone().to_path_buf();
+
         let parent_path = 
-            directory_path
+            directory_path_copy
                 .canonicalize()
-                .and_then(|cannonical_path| cannonical_path.parent().ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory")))?;
+                .and_then(|cannonical_path: PathBuf| cannonical_path.parent().ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory")))
+                .and_then(|p| Ok(p.to_path_buf()))?;
         
         let destination_path = 
             file_path
