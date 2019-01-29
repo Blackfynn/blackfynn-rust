@@ -188,6 +188,7 @@ pub struct S3File {
     size: u64,
     chunked_upload: Option<ChunkedUploadProperties>,
     multipart_upload_id: Option<MultipartUploadId>,
+    file_path: Option<String>,
 }
 
 fn file_chunks<P: AsRef<Path>>(
@@ -213,7 +214,7 @@ impl S3File {
     fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(
         path: P,
         file: Q,
-    ) -> bf::Result<(String, fs::Metadata)> {
+    ) -> bf::Result<(String, Option<String>, fs::Metadata)> {
         let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
@@ -230,7 +231,7 @@ impl S3File {
             .into());
         };
 
-        // Get the full file path as a String:
+        // Get the file name as a String:
         let file_name: bf::Result<String> = file_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -239,10 +240,20 @@ impl S3File {
 
         let file_name = file_name?;
 
+        let cannonical_path = path.as_ref().canonicalize().map(|path| path.parent())?;
+        
+        let destination_path = 
+            file_path
+                .strip_prefix(cannonical_path)
+                .ok()
+                .and_then(|path| path.to_str().map(|path_str| path_str.to_owned()));
+
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
 
-        Ok((file_name, metadata))
+        println!("{:?}", destination_path);
+        
+        Ok((file_name, destination_path, metadata))
     }
 
     #[allow(dead_code)]
@@ -252,14 +263,15 @@ impl S3File {
         file: Q,
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
-        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+        let (file_name, file_path, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
 
         Ok(Self {
             upload_id,
             file_name,
             size: metadata.len(),
             chunked_upload: None,
-            multipart_upload_id: None
+            multipart_upload_id: None,
+            file_path: file_path,
         })
     }
 
@@ -298,6 +310,7 @@ impl S3File {
                 total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
             }),
             multipart_upload_id: self.multipart_upload_id,
+            file_path: None,
         }
     }
 
@@ -312,6 +325,7 @@ impl S3File {
             size: self.size,
             chunked_upload: self.chunked_upload,
             multipart_upload_id,
+            file_path: None,
         }
     }
 
@@ -599,4 +613,22 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    pub fn during_directory_upload_root_upload_directory_path_finding_works() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+
+        let result = S3File::new(path, file, None);
+
+        match result {
+            Err(err) => panic!("failed to get directory {:?}", err),
+            Ok(_) => {
+                let s3File = result.unwrap();
+
+                assert!(s3File.file_path == Some("data/small/".to_string()))
+            }
+        }
+    }
+
 }
