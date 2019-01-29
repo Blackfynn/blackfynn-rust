@@ -243,23 +243,22 @@ impl S3File {
 
         let directory_path_copy: PathBuf = directory_path.clone().to_path_buf();
 
-        let parent_path = 
-            directory_path_copy
-                .canonicalize()
-                .and_then(|cannonical_path: PathBuf| cannonical_path.parent().ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory")))
-                .and_then(|p| Ok(p.to_path_buf()))?;
+        let canonical_dir_path = directory_path_copy.canonicalize()?;
+
+        let parent_path = canonical_dir_path
+            .parent()
+            .ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory"))?; 
         
         let destination_path = 
             file_path
                 .strip_prefix(parent_path)
                 .ok()
+                .and_then(|path| path.parent())
                 .and_then(|path| path.to_str().map(|path_str| path_str.to_owned()));
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
 
-        println!("{:?}", destination_path);
-        
         Ok((file_name, destination_path, metadata))
     }
 
@@ -631,9 +630,9 @@ mod tests {
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
             Ok(_) => {
-                let s3File = result.unwrap();
+                let s3_file = result.unwrap();
 
-                assert!(s3File.file_path == Some("data/small/".to_string()))
+                assert!(s3_file.file_path == Some("data/small".to_string()))
             }
         }
     }
