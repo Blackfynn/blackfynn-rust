@@ -290,7 +290,7 @@ impl S3File {
         let directory_path = directory_path.as_ref();
         let file_path = file_path.as_ref();
 
-        if(!directory_path.is_dir()) {
+        if !directory_path.is_dir() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                             io::ErrorKind::Other,
                             format!("Provided path was not a direcotry: {:?}", directory_path),
@@ -298,8 +298,7 @@ impl S3File {
                     );
         }
 
-        let root_dir_path = 
-            directory_path
+        let root_dir_path = directory_path
                 .parent()
                 .ok_or_else(|| {
                     bf::error::ErrorKind::IoError(io::Error::new(
@@ -346,7 +345,7 @@ impl S3File {
                 total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
             }),
             multipart_upload_id: self.multipart_upload_id,
-            file_path: None,
+            file_path: self.file_path,
         }
     }
 
@@ -361,7 +360,7 @@ impl S3File {
             size: self.size,
             chunked_upload: self.chunked_upload,
             multipart_upload_id,
-            file_path: None,
+            file_path: self.file_path,
         }
     }
 
