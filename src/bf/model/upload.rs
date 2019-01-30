@@ -245,10 +245,13 @@ impl S3File {
 
         let file_path_copy = file_path.clone();
 
+        // the cannonical file path without the cannonical path of it's
+        // the direcctory being uploaded to
         let upload_dir_path = file_path_copy
             .strip_prefix(&canonical_dir_path)
             .map_err(|err| bf::error::Error::with_chain(err, format!("could not strip prefix from {:?} with {:?}", file_path_copy, canonical_dir_path)))?;
 
+        // the directory the file is to be uploaded to
         let destination_path: Option<String> = upload_dir_path.parent()
                 .and_then(|path| {
                     match path.to_str() {
@@ -284,6 +287,8 @@ impl S3File {
         })
     }
 
+    // A function to construct a S3File with a file path
+    // that is not root. This will force the upload of a collection
     pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
         file_path: P,
         directory_path: Q,
