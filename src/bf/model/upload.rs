@@ -243,11 +243,13 @@ impl S3File {
 
         let canonical_dir_path = directory_path.canonicalize()?;
 
-        let destination_path: Option<String> = 
-            file_path
-                .strip_prefix(canonical_dir_path)
-                .ok()
-                .and_then(|path| path.parent())
+        let file_path_copy = file_path.clone();
+
+        let upload_dir_path = file_path_copy
+            .strip_prefix(&canonical_dir_path)
+            .map_err(|err| bf::error::Error::with_chain(err, format!("could not strip prefix from {:?} with {:?}", file_path_copy, canonical_dir_path)))?;
+
+        let destination_path: Option<String> = upload_dir_path.parent()
                 .and_then(|path| {
                     match path.to_str() {
                         Some("") => None,
