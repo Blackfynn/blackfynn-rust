@@ -176,7 +176,7 @@ impl From<&MultipartUploadId> for String {
 #[serde(rename_all = "camelCase")]
 pub struct ChunkedUploadProperties {
     pub chunk_size: u64,
-    total_chunks: usize
+    total_chunks: usize,
 }
 
 /// A type representing a file to be uploaded.
@@ -249,18 +249,25 @@ impl S3File {
         // the direcctory being uploaded to
         let upload_dir_path = file_path_copy
             .strip_prefix(&canonical_dir_path)
-            .map_err(|err| bf::error::Error::with_chain(err, format!("could not strip prefix from {:?} with {:?}", file_path_copy, canonical_dir_path)))?;
+            .map_err(|err| {
+                bf::error::Error::with_chain(
+                    err,
+                    format!(
+                        "could not strip prefix from {:?} with {:?}",
+                        file_path_copy, canonical_dir_path
+                    ),
+                )
+            })?;
 
         // the directory the file is to be uploaded to
-        let destination_path: Option<String> = upload_dir_path.parent()
-                .and_then(|path| {
-                    match path.to_str() {
-                        Some("") => Some("/"),
-                        Some(p) => Some(p),
-                        None => None
-                    }
-                })
-                .map(|path| path.to_owned());
+        let destination_path: Option<String> = upload_dir_path
+            .parent()
+            .and_then(|path| match path.to_str() {
+                Some("") => Some("/"),
+                Some(p) => Some(p),
+                None => None,
+            })
+            .map(|path| path.to_owned());
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
@@ -299,20 +306,18 @@ impl S3File {
 
         if !directory_path.is_dir() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Provided path was not a direcotry: {:?}", directory_path),
-                        )).into()
-                    );
+                io::ErrorKind::Other,
+                format!("Provided path was not a direcotry: {:?}", directory_path),
+            ))
+            .into());
         }
 
-        let root_dir_path = directory_path
-                .parent()
-                .ok_or_else(|| {
-                    bf::error::ErrorKind::IoError(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Could not destructure path: {:?}", directory_path),
-                    ))
-                })?;
+        let root_dir_path = directory_path.parent().ok_or_else(|| {
+            bf::error::ErrorKind::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", directory_path),
+            ))
+        })?;
 
         S3File::new(root_dir_path, file_path, upload_id)
     }
@@ -339,10 +344,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn with_chunk_size(
-        self,
-        chunk_size: Option<u64>
-    ) -> Self {
+    pub fn with_chunk_size(self, chunk_size: Option<u64>) -> Self {
         Self {
             upload_id: self.upload_id.clone(),
             file_name: self.file_name.clone(),
@@ -357,10 +359,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn with_multipart_upload_id(
-        self,
-        multipart_upload_id: Option<MultipartUploadId>
-    ) -> Self {
+    pub fn with_multipart_upload_id(self, multipart_upload_id: Option<MultipartUploadId>) -> Self {
         Self {
             upload_id: self.upload_id.clone(),
             file_name: self.file_name.clone(),
@@ -665,7 +664,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some("data/small".to_string()))
+            Ok(s3_file) => assert!(s3_file.file_path == Some("data/small".to_string())),
         }
     }
 
@@ -678,7 +677,6 @@ mod tests {
         assert!(result.is_err(), true);
     }
 
-
     #[test]
     pub fn during_non_directory_upload_file_path_is_none() {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
@@ -687,7 +685,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some("/".to_string()))
+            Ok(s3_file) => assert!(s3_file.file_path == Some("/".to_string())),
         }
     }
 }

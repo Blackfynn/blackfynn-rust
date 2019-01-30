@@ -46,7 +46,7 @@ impl ChunkedFilePayload {
     ) -> Self
     where
         P: AsRef<Path>,
-        C: 'static + ProgressCallback
+        C: 'static + ProgressCallback,
     {
         Self::new_with_chunk_size(
             import_id,
@@ -66,7 +66,7 @@ impl ChunkedFilePayload {
     ) -> Self
     where
         P: AsRef<Path>,
-        C: 'static + ProgressCallback
+        C: 'static + ProgressCallback,
     {
         // ensure missing parts are sorted
         let mut sorted_missing_parts = missing_parts
@@ -139,8 +139,7 @@ impl ChunkedFilePayload {
     }
 }
 
-impl Stream for ChunkedFilePayload
-{
+impl Stream for ChunkedFilePayload {
     type Item = FileChunk;
     type Error = io::Error;
 
@@ -245,9 +244,7 @@ mod tests {
         )
     }
 
-    fn chunked_payload_missing_parts(
-        missing_parts: &FileMissingParts,
-    ) -> ChunkedFilePayload {
+    fn chunked_payload_missing_parts(missing_parts: &FileMissingParts) -> ChunkedFilePayload {
         ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
@@ -257,9 +254,7 @@ mod tests {
         )
     }
 
-    fn chunks(
-        payload: &mut ChunkedFilePayload,
-    ) -> Vec<FileChunk> {
+    fn chunks(payload: &mut ChunkedFilePayload) -> Vec<FileChunk> {
         payload.collect().wait().unwrap()
     }
 
