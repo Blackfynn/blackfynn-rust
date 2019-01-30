@@ -241,23 +241,26 @@ impl S3File {
 
         let file_name = file_name?;
 
-        let directory_path_copy: PathBuf = directory_path.clone().to_path_buf();
+        let canonical_dir_path = directory_path.canonicalize()?;
 
-        let canonical_dir_path = directory_path_copy.canonicalize()?;
-
-        let parent_path = canonical_dir_path
-            .parent()
-            .ok_or(std::io::Error::new(std::io::ErrorKind::Other, "couldn't get parent directory"))?; 
-        
-        let destination_path = 
+        let destination_path: Option<String> = 
             file_path
-                .strip_prefix(parent_path)
+                .strip_prefix(canonical_dir_path)
                 .ok()
                 .and_then(|path| path.parent())
-                .and_then(|path| path.to_str().map(|path_str| path_str.to_owned()));
+                .and_then(|path| {
+                    match path.to_str() {
+                        Some("") => None,
+                        Some(p) => Some(p),
+                        None => None
+                    }
+                })
+                .map(|path| path.to_owned());
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
+
+        println!("{:?}", destination_path);
 
         Ok((file_name, destination_path, metadata))
     }
@@ -279,6 +282,35 @@ impl S3File {
             multipart_upload_id: None,
             file_path: file_path,
         })
+    }
+
+    pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
+        file_path: P,
+        directory_path: Q,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
+        let directory_path = directory_path.as_ref();
+        let file_path = file_path.as_ref();
+
+        if(!directory_path.is_dir()) {
+            return Err(bf::error::ErrorKind::IoError(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Provided path was not a direcotry: {:?}", directory_path),
+                        )).into()
+                    );
+        }
+
+        let root_dir_path = 
+            directory_path
+                .parent()
+                .ok_or_else(|| {
+                    bf::error::ErrorKind::IoError(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Could not destructure path: {:?}", directory_path),
+                    ))
+                })?;
+
+        S3File::new(root_dir_path, file_path, upload_id)
     }
 
     #[allow(dead_code)]
@@ -625,7 +657,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let result = S3File::new(path, file, None);
+        let result = S3File::retaining_file_path(file, path, None);
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
@@ -636,5 +668,23 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    pub fn during_non_directory_upload_file_path_is_none() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+
+        let result = S3File::from_file_path(file, None);
+
+        match result {
+            Err(err) => panic!("failed to get directory {:?}", err),
+            Ok(_) => { 
+                let s3_file = result.unwrap();
+
+                assert!(s3_file.file_path == None)
+            }
+        }
+    }
+
+
 
 }
