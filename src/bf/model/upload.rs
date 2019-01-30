@@ -283,7 +283,8 @@ impl S3File {
 
         // the cannonical file path without the cannonical path of the
         // the direcctory being uploaded to
-        // eg "/user/pete/data/sample/image.png" is the canonical file_path
+        // eg
+        // "/user/pete/data/sample/image.png" is the canonical file_path
         // "/user/pete/" is the canonical_dir_path
         // result upload_dir_path is "/data/sample/"
         let upload_dir_path = file_path_copy
