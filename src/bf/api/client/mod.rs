@@ -1180,7 +1180,9 @@ pub mod tests {
     #[test]
     fn login_fails_locally() {
         let bf = bf();
-        let result = run(&bf, move |bf| bf.login(TEST_API_KEY, "this-is-a-bad-secret"));
+        let result = run(&bf, move |bf| {
+            bf.login(TEST_API_KEY, "this-is-a-bad-secret")
+        });
         assert!(result.is_err());
         assert!(bf.session_token().is_none());
     }

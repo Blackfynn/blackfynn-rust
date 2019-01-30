@@ -176,7 +176,47 @@ impl From<&MultipartUploadId> for String {
 #[serde(rename_all = "camelCase")]
 pub struct ChunkedUploadProperties {
     pub chunk_size: u64,
-    total_chunks: usize
+    total_chunks: usize,
+}
+
+/// A non canonical but validated path to a file
+///
+/// `file_name` is the name of the file being uploaded
+///
+/// `destination_path` represents the location in the platform
+/// the file will be uploaded to
+///
+/// `metadata` is the metadata of the file being uploaded
+struct NormalizedPath {
+    file_name: String,
+    destination_path: Option<String>,
+    metadata: fs::Metadata,
+}
+
+impl NormalizedPath {
+    pub fn new(
+        file_name: String,
+        destination_path: Option<String>,
+        metadata: fs::Metadata,
+    ) -> Self {
+        Self {
+            file_name,
+            destination_path,
+            metadata,
+        }
+    }
+
+    pub fn file_name(&self) -> &String {
+        &self.file_name
+    }
+
+    pub fn destination_path(&self) -> Option<&String> {
+        self.destination_path.as_ref()
+    }
+
+    pub fn metadata(&self) -> &fs::Metadata {
+        &self.metadata
+    }
 }
 
 /// A type representing a file to be uploaded.
@@ -188,6 +228,7 @@ pub struct S3File {
     size: u64,
     chunked_upload: Option<ChunkedUploadProperties>,
     multipart_upload_id: Option<MultipartUploadId>,
+    file_path: Option<String>,
 }
 
 fn file_chunks<P: AsRef<Path>>(
@@ -204,17 +245,14 @@ fn file_chunks<P: AsRef<Path>>(
 }
 
 impl S3File {
-    /// Given a file path, this function checks to see if the path:
-    ///
-    /// 1) exists
-    /// 2) does not contain invalid unicode symbols
+    /// path is expected to be a base directory, and file is expected to be a filename + extension.
+    /// When path and file are joined with a separator, a full (but not necessarily absolute) file
+    /// path is constructed.
     ///
     /// If neither condition hold, this function will return an error
-    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(
-        path: P,
-        file: Q,
-    ) -> bf::Result<(String, fs::Metadata)> {
-        let file_path: PathBuf = path.as_ref().join(file.as_ref()).canonicalize()?;
+    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q) -> bf::Result<NormalizedPath> {
+        let directory_path = path.as_ref();
+        let file_path: PathBuf = directory_path.join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
@@ -230,7 +268,7 @@ impl S3File {
             .into());
         };
 
-        // Get the full file path as a String:
+        // Get the file name as a String:
         let file_name: bf::Result<String> = file_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -239,10 +277,42 @@ impl S3File {
 
         let file_name = file_name?;
 
+        let canonical_dir_path = directory_path.canonicalize()?;
+
+        let file_path_copy = file_path.clone();
+
+        // the cannonical file path without the cannonical path of the
+        // the direcctory being uploaded to
+        // eg
+        // "/user/pete/data/sample/image.png" is the canonical file_path
+        // "/user/pete/" is the canonical_dir_path
+        // result upload_dir_path is "/data/sample/"
+        let upload_dir_path = file_path_copy
+            .strip_prefix(&canonical_dir_path)
+            .map_err(|err| {
+                bf::error::Error::with_chain(
+                    err,
+                    format!(
+                        "could not strip prefix from {:?} with {:?}",
+                        file_path_copy, canonical_dir_path
+                    ),
+                )
+            })?;
+
+        // the directory the file is to be uploaded to
+        let destination_path: Option<String> = upload_dir_path
+            .parent()
+            .and_then(|path| match path.to_str() {
+                Some("") => Some("/"),
+                Some(p) => Some(p),
+                None => None,
+            })
+            .map(|path| path.to_owned());
+
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
 
-        Ok((file_name, metadata))
+        Ok(NormalizedPath::new(file_name, destination_path, metadata))
     }
 
     #[allow(dead_code)]
@@ -252,15 +322,48 @@ impl S3File {
         file: Q,
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
-        let (file_name, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+        let normalized_path = Self::normalize(path.as_ref(), file.as_ref())?;
 
         Ok(Self {
             upload_id,
-            file_name,
-            size: metadata.len(),
+            file_name: normalized_path.file_name,
+            size: normalized_path.metadata.len(),
             chunked_upload: None,
-            multipart_upload_id: None
+            multipart_upload_id: None,
+            file_path: normalized_path.destination_path,
         })
+    }
+
+    /// Construct a S3File with the a `file_path` that is the difference
+    /// from the `file_path` to the `directory_path`
+    ///
+    /// for `file_path` = "/data/sample/image.png" and
+    /// `directory_path` = "data/" then the resulting `file_path`
+    /// on the `S3File` will be "data/sample"
+    pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
+        file_path: P,
+        directory_path: Q,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
+        let directory_path = directory_path.as_ref();
+        let file_path = file_path.as_ref();
+
+        if !directory_path.is_dir() {
+            return Err(bf::error::ErrorKind::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Provided path was not a direcotry: {:?}", directory_path),
+            ))
+            .into());
+        }
+
+        let root_dir_path = directory_path.parent().ok_or_else(|| {
+            bf::error::ErrorKind::IoError(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Could not destructure path: {:?}", directory_path),
+            ))
+        })?;
+
+        S3File::new(root_dir_path, file_path, upload_id)
     }
 
     #[allow(dead_code)]
@@ -285,10 +388,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn with_chunk_size(
-        self,
-        chunk_size: Option<u64>
-    ) -> Self {
+    pub fn with_chunk_size(self, chunk_size: Option<u64>) -> Self {
         Self {
             upload_id: self.upload_id.clone(),
             file_name: self.file_name.clone(),
@@ -298,20 +398,19 @@ impl S3File {
                 total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
             }),
             multipart_upload_id: self.multipart_upload_id,
+            file_path: self.file_path,
         }
     }
 
     #[allow(dead_code)]
-    pub fn with_multipart_upload_id(
-        self,
-        multipart_upload_id: Option<MultipartUploadId>
-    ) -> Self {
+    pub fn with_multipart_upload_id(self, multipart_upload_id: Option<MultipartUploadId>) -> Self {
         Self {
             upload_id: self.upload_id.clone(),
             file_name: self.file_name.clone(),
             size: self.size,
             chunked_upload: self.chunked_upload,
             multipart_upload_id,
+            file_path: self.file_path,
         }
     }
 
@@ -597,6 +696,40 @@ mod tests {
                 let chunks = result.unwrap();
                 assert!(chunks.len() > 1);
             }
+        }
+    }
+
+    #[test]
+    pub fn during_directory_upload_root_upload_directory_path_finding_works() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+
+        let result = S3File::retaining_file_path(file, path, None);
+
+        match result {
+            Err(err) => panic!("failed to get directory {:?}", err),
+            Ok(s3_file) => assert!(s3_file.file_path == Some("data/small".to_string())),
+        }
+    }
+
+    pub fn during_directory_upload_directory_and_a_file_must_be_used() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+        let file_copy = file.clone();
+
+        let result = S3File::retaining_file_path(file, file_copy, None);
+
+        assert!(result.is_err(), true);
+    }
+
+    #[test]
+    pub fn during_non_directory_upload_file_path_is_none() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+
+        let result = S3File::from_file_path(file, None);
+
+        match result {
+            Err(err) => panic!("failed to get directory {:?}", err),
+            Ok(s3_file) => assert!(s3_file.file_path == Some("/".to_string())),
         }
     }
 }
