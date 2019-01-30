@@ -252,7 +252,7 @@ impl S3File {
         let destination_path: Option<String> = upload_dir_path.parent()
                 .and_then(|path| {
                     match path.to_str() {
-                        Some("") => None,
+                        Some("") => Some("/"),
                         Some(p) => Some(p),
                         None => None
                     }
@@ -682,7 +682,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == None)
+            Ok(s3_file) => assert!(s3_file.file_path == Some("/".to_string()))
         }
     }
 }
