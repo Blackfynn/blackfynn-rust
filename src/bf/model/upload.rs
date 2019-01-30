@@ -658,11 +658,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(_) => {
-                let s3_file = result.unwrap();
-
-                assert!(s3_file.file_path == Some("data/small".to_string()))
-            }
+            Ok(s3_file) => assert!(s3_file.file_path == Some("data/small".to_string()))
         }
     }
 
@@ -684,14 +680,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(_) => { 
-                let s3_file = result.unwrap();
-
-                assert!(s3_file.file_path == None)
-            }
+            Ok(s3_file) => assert!(s3_file.file_path == None)
         }
     }
-
-
-
 }
