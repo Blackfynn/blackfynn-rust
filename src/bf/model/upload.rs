@@ -325,8 +325,19 @@ impl S3File {
         })
     }
 
-    // A function to construct a S3File with a file path
-    // that is not root. This will force the upload of a collection
+    /// Construct a S3File with the a `file_path` that is the difference
+    /// from the `file_path` to the `directory_path`
+    ///
+    /// #Examples
+    ///
+    /// ```
+    /// let file_path = Path::new("/data/sample/image.png");
+    /// let directory_path = Path::new("/data/");
+    ///
+    /// let s3_file = retaining_file_path(file_path, directory_path, None);
+    ///
+    /// assert!(s3_file.file_path, Some("data/sample/".to_string()))
+    /// ```
     pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
         file_path: P,
         directory_path: Q,
