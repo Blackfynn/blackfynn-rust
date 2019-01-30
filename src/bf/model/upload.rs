@@ -188,27 +188,35 @@ pub struct ChunkedUploadProperties {
 ///
 /// `metadata` is the metadata of the file being uploaded
 struct NormalizedPath {
-  file_name: String,
-  destination_path: Option<String>,
-  metadata: fs::Metadata
+    file_name: String,
+    destination_path: Option<String>,
+    metadata: fs::Metadata,
 }
 
 impl NormalizedPath {
-  pub fn new(file_name: String, destination_path: Option<String>, metadata: fs::Metadata) -> Self {
-    Self { file_name, destination_path, metadata }
-  }
+    pub fn new(
+        file_name: String,
+        destination_path: Option<String>,
+        metadata: fs::Metadata,
+    ) -> Self {
+        Self {
+            file_name,
+            destination_path,
+            metadata,
+        }
+    }
 
-  pub fn file_name(&self) -> &String {
-    &self.file_name
-  }
+    pub fn file_name(&self) -> &String {
+        &self.file_name
+    }
 
-  pub fn destination_path(&self) -> Option<&String> {
-    self.destination_path.as_ref()
-  }
+    pub fn destination_path(&self) -> Option<&String> {
+        self.destination_path.as_ref()
+    }
 
-  pub fn metadata(&self) -> &fs::Metadata {
-    &self.metadata
-  }
+    pub fn metadata(&self) -> &fs::Metadata {
+        &self.metadata
+    }
 }
 
 /// A type representing a file to be uploaded.
@@ -242,10 +250,7 @@ impl S3File {
     /// path is constructed.
     ///
     /// If neither condition hold, this function will return an error
-    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(
-        path: P,
-        file: Q,
-    ) -> bf::Result<NormalizedPath> {
+    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q) -> bf::Result<NormalizedPath> {
         let directory_path = path.as_ref();
         let file_path: PathBuf = directory_path.join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
@@ -328,16 +333,9 @@ impl S3File {
     /// Construct a S3File with the a `file_path` that is the difference
     /// from the `file_path` to the `directory_path`
     ///
-    /// #Examples
-    ///
-    /// ```
-    /// let file_path = Path::new("/data/sample/image.png");
-    /// let directory_path = Path::new("/data/");
-    ///
-    /// let s3_file = retaining_file_path(file_path, directory_path, None);
-    ///
-    /// assert!(s3_file.file_path, Some("data/sample/".to_string()))
-    /// ```
+    /// for `file_path` = "/data/sample/image.png" and
+    /// `directory_path` = "data/" then the resulting `file_path`
+    /// on the `S3File` will be "data/sample"
     pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
         file_path: P,
         directory_path: Q,
