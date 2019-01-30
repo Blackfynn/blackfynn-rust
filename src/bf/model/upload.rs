@@ -179,6 +179,38 @@ pub struct ChunkedUploadProperties {
     total_chunks: usize,
 }
 
+/// A non canonical but validated path to a file
+///
+/// `file_name` is the name of the file being uploaded
+///
+/// `destination_path` represents the location in the platform
+/// the file will be uploaded to
+///
+/// `metadata` is the metadata of the file being uploaded
+struct NormalizedPath {
+  file_name: String,
+  destination_path: Option<String>,
+  metadata: fs::Metadata
+}
+
+impl NormalizedPath {
+  pub fn new(file_name: String, destination_path: Option<String>, metadata: fs::Metadata) -> Self {
+    Self { file_name, destination_path, metadata }
+  }
+
+  pub fn file_name(&self) -> &String {
+    &self.file_name
+  }
+
+  pub fn destination_path(&self) -> Option<&String> {
+    self.destination_path.as_ref()
+  }
+
+  pub fn metadata(&self) -> &fs::Metadata {
+    &self.metadata
+  }
+}
+
 /// A type representing a file to be uploaded.
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,16 +237,15 @@ fn file_chunks<P: AsRef<Path>>(
 }
 
 impl S3File {
-    /// Given a file path, this function checks to see if the path:
-    ///
-    /// 1) exists
-    /// 2) does not contain invalid unicode symbols
+    /// path is expected to be a base directory, and file is expected to be a filename + extension.
+    /// When path and file are joined with a separator, a full (but not necessarily absolute) file
+    /// path is constructed.
     ///
     /// If neither condition hold, this function will return an error
     fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(
         path: P,
         file: Q,
-    ) -> bf::Result<(String, Option<String>, fs::Metadata)> {
+    ) -> bf::Result<NormalizedPath> {
         let directory_path = path.as_ref();
         let file_path: PathBuf = directory_path.join(file.as_ref()).canonicalize()?;
         if !file_path.is_file() {
@@ -272,7 +303,7 @@ impl S3File {
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
 
-        Ok((file_name, destination_path, metadata))
+        Ok(NormalizedPath::new(file_name, destination_path, metadata))
     }
 
     #[allow(dead_code)]
@@ -282,15 +313,15 @@ impl S3File {
         file: Q,
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
-        let (file_name, file_path, metadata) = Self::normalize(path.as_ref(), file.as_ref())?;
+        let normalized_path = Self::normalize(path.as_ref(), file.as_ref())?;
 
         Ok(Self {
             upload_id,
-            file_name,
-            size: metadata.len(),
+            file_name: normalized_path.file_name,
+            size: normalized_path.metadata.len(),
             chunked_upload: None,
             multipart_upload_id: None,
-            file_path: file_path,
+            file_path: normalized_path.destination_path,
         })
     }
 
