@@ -281,8 +281,11 @@ impl S3File {
 
         let file_path_copy = file_path.clone();
 
-        // the cannonical file path without the cannonical path of it's
+        // the cannonical file path without the cannonical path of the
         // the direcctory being uploaded to
+        // eg "/user/pete/data/sample/image.png" is the canonical file_path
+        // "/user/pete/" is the canonical_dir_path
+        // result upload_dir_path is "/data/sample/"
         let upload_dir_path = file_path_copy
             .strip_prefix(&canonical_dir_path)
             .map_err(|err| {
