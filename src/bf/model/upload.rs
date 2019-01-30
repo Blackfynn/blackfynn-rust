@@ -260,8 +260,6 @@ impl S3File {
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
 
-        println!("{:?}", destination_path);
-
         Ok((file_name, destination_path, metadata))
     }
 
@@ -668,6 +666,16 @@ mod tests {
             }
         }
     }
+
+    pub fn during_directory_upload_directory_and_a_file_must_be_used() {
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
+        let file_copy = file.clone();
+
+        let result = S3File::retaining_file_path(file, file_copy, None);
+
+        assert!(result.is_err(), true);
+    }
+
 
     #[test]
     pub fn during_non_directory_upload_file_path_is_none() {
