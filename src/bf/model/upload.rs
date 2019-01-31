@@ -668,6 +668,7 @@ impl PackagePreview {
         &self.group_size
     }
 
+    #[allow(dead_code)]
     pub fn preview_path(&self) -> Option<&String> {
         self.preview_path.as_ref()
     }
