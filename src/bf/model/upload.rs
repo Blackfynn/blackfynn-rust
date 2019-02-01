@@ -341,8 +341,9 @@ impl S3File {
     /// `directory_path` = "data/" then the resulting `file_path`
     /// on the `S3File` will be "data/sample"
     pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
-        file_path: P,
         directory_path: Q,
+        file_path: P,
+        // perview path should be expected uploaded directory
         upload_id: Option<UploadId>,
     ) -> bf::Result<Self> {
         let directory_path = directory_path.as_ref();
@@ -351,7 +352,7 @@ impl S3File {
         if !directory_path.is_dir() {
             return Err(bf::error::ErrorKind::IoError(io::Error::new(
                 io::ErrorKind::Other,
-                format!("Provided path was not a direcotry: {:?}", directory_path),
+                format!("Provided path was not a directory: {:?}", directory_path),
             ))
             .into());
         }
@@ -710,7 +711,7 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let result = S3File::retaining_file_path(file, path, None);
+        let result = S3File::retaining_file_path(path, file, None);
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),

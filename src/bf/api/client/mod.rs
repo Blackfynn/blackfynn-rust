@@ -1,4 +1,3 @@
-// Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 //! Functions to interact with the Blackfynn platform.
 
@@ -2221,17 +2220,16 @@ pub mod tests {
                     })
                 })
                 .and_then(move |(bf, dataset_id, organization_id)| {
+                    let files_with_path: Vec<String> = MEDIUM_TEST_FILES.iter().map(|filename| format!("medium/{}", filename)).collect();
                     bf.preview_upload_using_upload_service(
                         &organization_id,
                         &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
-                        &*MEDIUM_TEST_FILES,
+                        &*files_with_path,
                         false,
                         true,
                     )
                     .map(|preview| {
-                        // perview path should be expected uploaded directory
-                        assert_eq!(preview.preview_path(), "medium");
 
                         (
                             bf,
@@ -2248,6 +2246,9 @@ pub mod tests {
                     let dataset_id_clone = dataset_id.clone();
 
                     let upload_futures = preview.into_iter().map(move |package| {
+                        // perview path should be expected uploaded directory
+                        assert_eq!(package.preview_path(), Some(&"medium".to_string()));
+
                         let import_id = package.import_id().clone();
                         let bf = bf.clone();
                         let bf_clone = bf.clone();
@@ -2288,7 +2289,7 @@ pub mod tests {
                     futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
                 })
                 .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
-            into_future_trait(f)
+            into_future_trait(upload_f)
         });
 
         // check result
