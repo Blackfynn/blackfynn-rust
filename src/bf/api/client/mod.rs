@@ -721,7 +721,7 @@ impl Blackfynn {
             .enumerate()
             .map(|(id, file)| {
                 let id = Some(Into::into(id as u64));
-                println!("{:?}", file.as_ref().to_str());
+
                 match is_directory_upload {
                     true => model::S3File::retaining_file_path(path.as_ref(), file.as_ref(), id),
                     false => model::S3File::new(path.as_ref(), file.as_ref(), id),
