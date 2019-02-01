@@ -711,6 +711,7 @@ impl Blackfynn {
         path: P,
         files: &[Q],
         append: bool,
+        is_directory_upload: bool,
     ) -> bf::Future<response::UploadPreview>
     where
         P: AsRef<Path>,
@@ -720,7 +721,12 @@ impl Blackfynn {
             .into_iter()
             .enumerate()
             .map(|(id, file)| {
-                model::S3File::new(path.as_ref(), file.as_ref(), Some(Into::into(id as u64)))
+                let id = Some(Into::into(id as u64));
+                println!("{:?}", file.as_ref().to_str());
+                match is_directory_upload {
+                    true => model::S3File::retaining_file_path(path.as_ref(), file.as_ref(), id),
+                    false => model::S3File::new(path.as_ref(), file.as_ref(), id),
+                }
             })
             .collect::<Result<Vec<_>, _>>();
 
@@ -1914,6 +1920,7 @@ pub mod tests {
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
+                        false,
                     )
                     .map(|preview| (bf, dataset_id, organization_id, preview))
                 })
@@ -2003,6 +2010,7 @@ pub mod tests {
                         &dataset_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
+                        false,
                         false,
                     )
                     .map(|preview| (bf, dataset_id, organization_id, preview))
@@ -2128,6 +2136,7 @@ pub mod tests {
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
+                        false,
                     )
                     .map(|preview| (bf, dataset_id, organization_id, preview))
                 })
@@ -2188,4 +2197,105 @@ pub mod tests {
             panic!();
         }
     }
+
+    #[test]
+    fn upload_directory() {
+        // preview upload and verify that it contains previewPath
+        let result = run(&bf(), move |bf| {
+            let upload_f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| {
+                    bf.create_dataset(request::dataset::Create::new(
+                        rand_suffix("$agent-test-dataset".to_string()),
+                        Some("A test dataset created by the agent".to_string()),
+                    ))
+                    .map(move |ds| (bf, ds.id().clone()))
+                })
+                .and_then(|(bf, dataset_id)| {
+                    bf.get_user().map(|user| {
+                        (
+                            bf,
+                            dataset_id,
+                            user.preferred_organization().unwrap().clone(),
+                        )
+                    })
+                })
+                .and_then(move |(bf, dataset_id, organization_id)| {
+                    bf.preview_upload_using_upload_service(
+                        &organization_id,
+                        &dataset_id,
+                        (*MEDIUM_TEST_DATA_DIR).to_string(),
+                        &*MEDIUM_TEST_FILES,
+                        false,
+                        true,
+                    )
+                    .map(|preview| {
+                        // perview path should be expected uploaded directory
+                        assert_eq!(preview.preview_path(), "medium");
+
+                        (
+                            bf,
+                            dataset_id,
+                            organization_id,
+                            preview,
+                        )
+                    })
+                })
+                .and_then(move |(bf, dataset_id, organization_id, preview)| {
+                    let bf = bf.clone();
+                    let bf_clone = bf.clone();
+                    let dataset_id = dataset_id.clone();
+                    let dataset_id_clone = dataset_id.clone();
+
+                    let upload_futures = preview.into_iter().map(move |package| {
+                        let import_id = package.import_id().clone();
+                        let bf = bf.clone();
+                        let bf_clone = bf.clone();
+                        let organization_id = organization_id.clone();
+
+                        let dataset_id = dataset_id.clone();
+                        let package = package.clone();
+
+                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
+                            .to_path_buf()
+                            .canonicalize()
+                            .unwrap();
+
+                        let progress_indicator = ProgressIndicator::new();
+
+                        // upload using the retries function
+                        bf.upload_file_chunks_to_upload_service_retries(
+                            &organization_id,
+                            &import_id,
+                            &file_path,
+                            package.files().to_vec(),
+                            progress_indicator.clone(),
+                            1,
+                        )
+                        .collect()
+                        .map(|_| (bf_clone, dataset_id))
+                        .and_then(move |(bf, dataset_id)| {
+                            bf.complete_upload_using_upload_service(
+                                &organization_id,
+                                &import_id,
+                                &dataset_id,
+                                None,
+                                false,
+                            )
+                        })
+                    });
+
+                    futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+                })
+                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+            into_future_trait(f)
+        });
+
+        // check result
+        if result.is_err() {
+            println!("{}", result.unwrap_err().display_chain().to_string());
+            panic!();
+        }
+    }
+
 }
