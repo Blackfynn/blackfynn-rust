@@ -73,6 +73,16 @@ impl fmt::Display for DatasetId {
     }
 }
 
+/// The representation type of a `model::Dataset`.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DatasetStatus {
+    NoStatus,
+    WorkInProgress,
+    Completed,
+    InReview,
+}
+
 /// A Blackfynn dataset.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +93,7 @@ pub struct Dataset {
     description: Option<String>,
     #[serde(deserialize_with = "model::PackageType::deserialize")]
     package_type: Option<model::PackageType>,
+    status: DatasetStatus,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -122,6 +133,11 @@ impl Dataset {
     #[allow(dead_code)]
     pub fn package_type(&self) -> Option<&model::PackageType> {
         self.package_type.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub fn status(&self) -> &DatasetStatus {
+        &self.status
     }
 
     #[allow(dead_code)]
