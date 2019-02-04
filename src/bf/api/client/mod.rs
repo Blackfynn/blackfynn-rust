@@ -1,4 +1,3 @@
-
 //! Functions to interact with the Blackfynn platform.
 
 pub mod progress;
@@ -722,9 +721,10 @@ impl Blackfynn {
             .map(|(id, file)| {
                 let id = Some(Into::into(id as u64));
 
-                match is_directory_upload {
-                    true => model::S3File::retaining_file_path(path.as_ref(), file.as_ref(), id),
-                    false => model::S3File::new(path.as_ref(), file.as_ref(), id),
+                if is_directory_upload {
+                    model::S3File::retaining_file_path(path.as_ref(), file.as_ref(), id)
+                } else {
+                    model::S3File::new(path.as_ref(), file.as_ref(), id)
                 }
             })
             .collect::<Result<Vec<_>, _>>();
@@ -2220,7 +2220,10 @@ pub mod tests {
                     })
                 })
                 .and_then(move |(bf, dataset_id, organization_id)| {
-                    let files_with_path: Vec<String> = MEDIUM_TEST_FILES.iter().map(|filename| format!("medium/{}", filename)).collect();
+                    let files_with_path: Vec<String> = MEDIUM_TEST_FILES
+                        .iter()
+                        .map(|filename| format!("medium/{}", filename))
+                        .collect();
                     bf.preview_upload_using_upload_service(
                         &organization_id,
                         &dataset_id,
@@ -2229,15 +2232,7 @@ pub mod tests {
                         false,
                         true,
                     )
-                    .map(|preview| {
-
-                        (
-                            bf,
-                            dataset_id,
-                            organization_id,
-                            preview,
-                        )
-                    })
+                    .map(|preview| (bf, dataset_id, organization_id, preview))
                 })
                 .and_then(move |(bf, dataset_id, organization_id, preview)| {
                     let bf = bf.clone();
