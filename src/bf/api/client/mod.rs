@@ -31,7 +31,8 @@ use bf;
 use bf::config::{Config, Environment};
 use bf::model::upload::MultipartUploadId;
 use bf::model::{
-    self, DatasetId, ImportId, OrganizationId, PackageId, SessionToken, TemporaryCredential, UserId,
+    self, DatasetId, DatasetNodeId, ImportId, OrganizationId, PackageId, SessionToken,
+    TemporaryCredential, UserId,
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -461,7 +462,7 @@ impl Blackfynn {
     }
 
     /// Get a specific dataset by its ID.
-    pub fn get_dataset_by_id(&self, id: DatasetId) -> bf::Future<response::Dataset> {
+    pub fn get_dataset_by_id(&self, id: DatasetNodeId) -> bf::Future<response::Dataset> {
         get!(self, route!("/datasets/{id}", id))
     }
 
@@ -488,14 +489,17 @@ impl Blackfynn {
     }
 
     /// Get the collaborators of the data set.
-    pub fn get_dataset_collaborators(&self, id: DatasetId) -> bf::Future<response::Collaborators> {
+    pub fn get_dataset_collaborators(
+        &self,
+        id: DatasetNodeId,
+    ) -> bf::Future<response::Collaborators> {
         get!(self, route!("/datasets/{id}/collaborators", id))
     }
 
     /// Share this data set with another user.
     pub fn share_dataset(
         &self,
-        id: DatasetId,
+        id: DatasetNodeId,
         users: Vec<UserId>,
     ) -> bf::Future<response::CollaboratorChanges> {
         put!(
@@ -509,7 +513,7 @@ impl Blackfynn {
     /// Unshare this data set with another user.
     pub fn unshare_dataset(
         &self,
-        id: DatasetId,
+        id: DatasetNodeId,
         users: Vec<UserId>,
     ) -> bf::Future<response::CollaboratorChanges> {
         delete!(
@@ -523,7 +527,7 @@ impl Blackfynn {
     /// Update an existing dataset.
     pub fn update_dataset(
         &self,
-        id: DatasetId,
+        id: DatasetNodeId,
         payload: request::dataset::Update,
     ) -> bf::Future<response::Dataset> {
         put!(
@@ -535,7 +539,7 @@ impl Blackfynn {
     }
 
     /// Delete an existing dataset.
-    pub fn delete_dataset(&self, id: DatasetId) -> bf::Future<()> {
+    pub fn delete_dataset(&self, id: DatasetNodeId) -> bf::Future<()> {
         let f: bf::Future<response::EmptyMap> = delete!(self, route!("/datasets/{id}", id));
         into_future_trait(f.map(|_| ()))
     }
@@ -607,7 +611,7 @@ impl Blackfynn {
         since = "0.4.0",
         note = "please upload using the upload service instead"
     )]
-    pub fn grant_upload(&self, id: DatasetId) -> bf::Future<response::UploadCredential> {
+    pub fn grant_upload(&self, id: DatasetNodeId) -> bf::Future<response::UploadCredential> {
         get!(self, route!("/security/user/credentials/upload/{id}", id))
     }
 
@@ -680,7 +684,7 @@ impl Blackfynn {
     pub fn complete_upload(
         &self,
         import_id: &ImportId,
-        dataset_id: &DatasetId,
+        dataset_id: &DatasetNodeId,
         destination_id: Option<&PackageId>,
         append: bool,
         use_upload_service: bool,
@@ -742,7 +746,7 @@ impl Blackfynn {
             ),
             params!(
                 "append" => if append { "true" } else { "false" },
-                "datasetId" => dataset_id
+                "dataset_id" => String::from(dataset_id.clone())
             ),
             &request::UploadPreview::new(&s3_files)
         )
@@ -887,7 +891,7 @@ impl Blackfynn {
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
-        dataset_id: &DatasetId,
+        dataset_id: &DatasetNodeId,
         destination_id: Option<&PackageId>,
         append: bool,
     ) -> bf::Future<response::Manifests> {
@@ -1289,7 +1293,7 @@ pub mod tests {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.get_dataset_by_id(DatasetId::new(FIXTURE_DATASET))),
+                    .and_then(move |_| bf.get_dataset_by_id(DatasetNodeId::new(FIXTURE_DATASET))),
             )
         });
 
@@ -1453,7 +1457,7 @@ pub mod tests {
     fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                bf.get_dataset_by_id(DatasetId::new(
+                bf.get_dataset_by_id(DatasetNodeId::new(
                     "N:dataset:not-real-6803-4a67-bf20-83076774a5c7",
                 ))
             }))
@@ -1586,7 +1590,7 @@ pub mod tests {
         let cred = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.grant_upload(DatasetId::new(FIXTURE_DATASET))),
+                    .and_then(move |_| bf.grant_upload(DatasetNodeId::new(FIXTURE_DATASET))),
             )
         });
         if cred.is_err() {
@@ -1608,7 +1612,7 @@ pub mod tests {
     }
 
     struct UploadScaffold {
-        dataset_id: DatasetId,
+        dataset_id: DatasetNodeId,
         preview: response::UploadPreview,
         upload_credential: response::UploadCredential,
     }
@@ -1901,21 +1905,22 @@ pub mod tests {
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
                     ))
-                    .map(move |ds| (bf, ds.id().clone()))
+                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
-                .and_then(|(bf, dataset_id)| {
+                .and_then(|(bf, dataset_id, dataset_int_id)| {
                     bf.get_user().map(|user| {
                         (
                             bf,
                             dataset_id,
                             user.preferred_organization().unwrap().clone(),
+                            dataset_int_id,
                         )
                     })
                 })
-                .and_then(move |(bf, dataset_id, organization_id)| {
+                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        &dataset_id,
+                        &dataset_int_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
@@ -1992,21 +1997,22 @@ pub mod tests {
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
                     ))
-                    .map(move |ds| (bf, ds.id().clone()))
+                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
-                .and_then(|(bf, dataset_id)| {
+                .and_then(|(bf, dataset_id, dataset_int_id)| {
                     bf.get_user().map(|user| {
                         (
                             bf,
                             dataset_id,
                             user.preferred_organization().unwrap().clone(),
+                            dataset_int_id,
                         )
                     })
                 })
-                .and_then(move |(bf, dataset_id, organization_id)| {
+                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        &dataset_id,
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2117,21 +2123,22 @@ pub mod tests {
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
                     ))
-                    .map(move |ds| (bf, ds.id().clone()))
+                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
-                .and_then(|(bf, dataset_id)| {
+                .and_then(|(bf, dataset_id, dataset_int_id)| {
                     bf.get_user().map(|user| {
                         (
                             bf,
                             dataset_id,
                             user.preferred_organization().unwrap().clone(),
+                            dataset_int_id,
                         )
                     })
                 })
-                .and_then(move |(bf, dataset_id, organization_id)| {
+                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        &dataset_id,
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2208,25 +2215,26 @@ pub mod tests {
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
                     ))
-                    .map(move |ds| (bf, ds.id().clone()))
+                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
-                .and_then(|(bf, dataset_id)| {
+                .and_then(|(bf, dataset_id, dataset_int_id)| {
                     bf.get_user().map(|user| {
                         (
                             bf,
                             dataset_id,
                             user.preferred_organization().unwrap().clone(),
+                            dataset_int_id,
                         )
                     })
                 })
-                .and_then(move |(bf, dataset_id, organization_id)| {
+                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     let files_with_path: Vec<String> = MEDIUM_TEST_FILES
                         .iter()
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     bf.preview_upload_using_upload_service(
                         &organization_id,
-                        &dataset_id,
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*files_with_path,
                         false,

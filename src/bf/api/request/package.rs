@@ -1,6 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model::{DatasetId, PackageType, Property};
+use bf::model::{DatasetNodeId, PackageType, Property};
 
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -8,14 +8,14 @@ pub struct Create {
     name: String,
     package_type: PackageType,
     properties: Vec<Property>,
-    dataset: DatasetId,
+    dataset: DatasetNodeId,
 }
 
 impl Create {
     pub fn new<P, Q>(name: P, package_type: PackageType, dataset: Q) -> Self
     where
         P: Into<String>,
-        Q: Into<DatasetId>,
+        Q: Into<DatasetNodeId>,
     {
         Self {
             name: name.into(),

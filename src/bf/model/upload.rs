@@ -206,14 +206,15 @@ impl NormalizedPath {
         }
     }
 
+    #[allow(dead_code)]
     pub fn file_name(&self) -> &String {
         &self.file_name
     }
-
+    #[allow(dead_code)]
     pub fn destination_path(&self) -> Option<&String> {
         self.destination_path.as_ref()
     }
-
+    #[allow(dead_code)]
     pub fn metadata(&self) -> &fs::Metadata {
         &self.metadata
     }
