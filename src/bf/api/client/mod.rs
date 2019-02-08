@@ -2242,7 +2242,7 @@ pub mod tests {
 
                     let upload_futures = preview.into_iter().map(move |package| {
                         // perview path should be expected uploaded directory
-                        assert_eq!(package.preview_path(), Some(&"medium".to_string()));
+                        assert_eq!(package.preview_path(), Some(&vec!["medium".to_string()]));
 
                         let import_id = package.import_id().clone();
                         let bf = bf.clone();

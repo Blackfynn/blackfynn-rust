@@ -637,7 +637,7 @@ pub struct PackagePreview {
     import_id: ImportId,
     files: Vec<S3File>,
     group_size: i64,
-    preview_path: Option<String>,
+    preview_path: Option<Vec<String>>,
 }
 
 impl PackagePreview {
@@ -677,7 +677,7 @@ impl PackagePreview {
     }
 
     #[allow(dead_code)]
-    pub fn preview_path(&self) -> Option<&String> {
+    pub fn preview_path(&self) -> Option<&Vec<String>> {
         self.preview_path.as_ref()
     }
 }
