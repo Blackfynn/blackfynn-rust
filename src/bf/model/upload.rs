@@ -189,14 +189,14 @@ pub struct ChunkedUploadProperties {
 /// `metadata` is the metadata of the file being uploaded
 struct NormalizedPath {
     file_name: String,
-    destination_path: Option<String>,
+    destination_path: Option<Vec<String>>,
     metadata: fs::Metadata,
 }
 
 impl NormalizedPath {
     pub fn new(
         file_name: String,
-        destination_path: Option<String>,
+        destination_path: Option<Vec<String>>,
         metadata: fs::Metadata,
     ) -> Self {
         Self {
@@ -210,7 +210,7 @@ impl NormalizedPath {
         &self.file_name
     }
 
-    pub fn destination_path(&self) -> Option<&String> {
+    pub fn destination_path(&self) -> Option<&Vec<String>> {
         self.destination_path.as_ref()
     }
 
@@ -228,7 +228,7 @@ pub struct S3File {
     size: u64,
     chunked_upload: Option<ChunkedUploadProperties>,
     multipart_upload_id: Option<MultipartUploadId>,
-    file_path: Option<String>,
+    file_path: Option<Vec<String>>,
 }
 
 fn file_chunks<P: AsRef<Path>>(
@@ -300,14 +300,21 @@ impl S3File {
             })?;
 
         // the directory the file is to be uploaded to
-        let destination_path: Option<String> = upload_dir_path
+        let destination_path: Option<Vec<String>> = upload_dir_path
             .parent()
-            .and_then(|path| match path.to_str() {
-                Some("") => Some("/"),
-                Some(p) => Some(p),
-                None => None,
+            .map(|path| {
+                path
+                    .to_path_buf()
+                    .iter()
+                    .map(|os_string| {
+                        os_string
+                            .to_str()
+                            .map(|dir| dir.to_string())
+                            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePathError(path.to_path_buf().clone()).into())
+                    })
+                    .collect::<bf::Result<Vec<String>>>()
             })
-            .map(|path| path.to_owned());
+            .map_or(Ok(None), |maybe_dir| maybe_dir.map(|dir| Some(dir)))?;
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
@@ -715,7 +722,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some("data/small".to_string())),
+            Ok(s3_file) => assert!(s3_file.file_path == Some(vec!["data".to_string(), "small".to_string()])),
         }
     }
 
@@ -736,7 +743,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some("/".to_string())),
+            Ok(s3_file) => assert!(s3_file.file_path == Some(vec![])),
         }
     }
 }
