@@ -677,8 +677,12 @@ impl PackagePreview {
     }
 
     #[allow(dead_code)]
-    pub fn preview_path(&self) -> Option<&Vec<String>> {
-        self.preview_path.as_ref()
+    pub fn preview_path(self) -> Option<String> {
+        self.preview_path
+            .map(|dirs| dirs.iter().cloned().collect::<PathBuf>())
+            .and_then(|path_buf| {
+                path_buf.as_path().to_str().map(|path_string| path_string.to_string())
+            })
     }
 }
 

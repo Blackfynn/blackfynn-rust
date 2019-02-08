@@ -2241,16 +2241,16 @@ pub mod tests {
                     let dataset_id_clone = dataset_id.clone();
 
                     let upload_futures = preview.into_iter().map(move |package| {
+                        let package_copy = package.clone();
                         // perview path should be expected uploaded directory
-                        assert_eq!(package.preview_path(), Some(&vec!["medium".to_string()]));
+                        assert_eq!(package.preview_path(), Some("medium".to_string()));
 
-                        let import_id = package.import_id().clone();
+                        let import_id = package_copy.import_id().clone();
                         let bf = bf.clone();
                         let bf_clone = bf.clone();
                         let organization_id = organization_id.clone();
 
                         let dataset_id = dataset_id.clone();
-                        let package = package.clone();
 
                         let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
                             .to_path_buf()
@@ -2264,7 +2264,7 @@ pub mod tests {
                             &organization_id,
                             &import_id,
                             &file_path,
-                            package.files().to_vec(),
+                            package_copy.files().to_vec(),
                             progress_indicator.clone(),
                             1,
                         )
