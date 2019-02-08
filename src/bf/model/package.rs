@@ -155,7 +155,7 @@ impl PackageType {
 pub struct Package {
     id: PackageId,
     name: String,
-    dataset_id: model::DatasetId,
+    dataset_id: model::DatasetNodeId,
     package_state: Option<PackageState>,
     #[serde(deserialize_with = "PackageType::deserialize")]
     package_type: Option<PackageType>,
@@ -186,7 +186,7 @@ impl Package {
     }
 
     #[allow(dead_code)]
-    pub fn dataset_id(&self) -> &model::DatasetId {
+    pub fn dataset_id(&self) -> &model::DatasetNodeId {
         &self.dataset_id
     }
 

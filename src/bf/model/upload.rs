@@ -206,14 +206,15 @@ impl NormalizedPath {
         }
     }
 
+    #[allow(dead_code)]
     pub fn file_name(&self) -> &String {
         &self.file_name
     }
-
+    #[allow(dead_code)]
     pub fn destination_path(&self) -> Option<&Vec<String>> {
         self.destination_path.as_ref()
     }
-
+    #[allow(dead_code)]
     pub fn metadata(&self) -> &fs::Metadata {
         &self.metadata
     }
@@ -303,14 +304,18 @@ impl S3File {
         let destination_path: Option<Vec<String>> = upload_dir_path
             .parent()
             .map(|path| {
-                path
-                    .to_path_buf()
+                path.to_path_buf()
                     .iter()
                     .map(|os_string| {
                         os_string
                             .to_str()
                             .map(|dir| dir.to_string())
-                            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePathError(path.to_path_buf().clone()).into())
+                            .ok_or_else(|| {
+                                bf::error::ErrorKind::InvalidUnicodePathError(
+                                    path.to_path_buf().clone(),
+                                )
+                                .into()
+                            })
                     })
                     .collect::<bf::Result<Vec<String>>>()
             })
@@ -681,7 +686,10 @@ impl PackagePreview {
         self.preview_path
             .map(|dirs| dirs.iter().cloned().collect::<PathBuf>())
             .and_then(|path_buf| {
-                path_buf.as_path().to_str().map(|path_string| path_string.to_string())
+                path_buf
+                    .as_path()
+                    .to_str()
+                    .map(|path_string| path_string.to_string())
             })
     }
 }
@@ -726,7 +734,9 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some(vec!["data".to_string(), "small".to_string()])),
+            Ok(s3_file) => {
+                assert!(s3_file.file_path == Some(vec!["data".to_string(), "small".to_string()]))
+            }
         }
     }
 
