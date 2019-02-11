@@ -768,7 +768,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == Some(vec![])),
+            Ok(s3_file) => assert!(s3_file.file_path == None) 
         }
     }
 }
