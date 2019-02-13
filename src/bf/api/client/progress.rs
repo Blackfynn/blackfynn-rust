@@ -95,7 +95,7 @@ impl ProgressUpdate {
         let bytes_sent = self.bytes_sent();
         let size = self.bytes_sent();
 
-        if size == 0 && bytes_sent == 0 {
+        if size == 0 {
             if self.part_number == 0 {
                 return 0.0;
             } else {
