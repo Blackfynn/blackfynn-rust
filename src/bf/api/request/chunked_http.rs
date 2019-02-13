@@ -374,4 +374,54 @@ mod tests {
         let chunks = chunks(chunked_payload.by_ref());
         assert!(chunks.len() == 4);
     }
+
+    #[test]
+    fn zero_byte_files_progress_is_updated_correctly() {
+        use std::sync;
+
+        struct Inner(sync::Mutex<bool>);
+
+        impl Inner {
+            pub fn new() -> Self {
+                Inner(sync::Mutex::new(false))
+            }
+        }
+        pub struct ProgressIndicator {
+            inner: sync::Arc<Inner>,
+        }
+
+        impl ProgressIndicator {
+            pub fn new() -> Self {
+                Self {
+                    inner: sync::Arc::new(Inner::new()),
+                }
+            }
+        }
+
+        impl ProgressCallback for ProgressIndicator {
+            fn on_update(&self, _update: &ProgressUpdate) {
+                if _update.part_number() == 0 {
+                    assert_eq!(_update.percent_done(), 0 as f32)
+                } else {
+                    assert_eq!(_update.percent_done(), 100 as f32);
+                }
+
+                *self.inner.0.lock().unwrap() = true;
+            }
+        }
+
+        let mut zero_byte_chunked_payload = ChunkedFilePayload::new(
+            ImportId::new("import_id"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/empty_file").to_owned(),
+            None,
+            ProgressIndicator::new(),
+        );
+
+        assert!(zero_byte_chunked_payload.parts_sent == 0);
+
+        zero_byte_chunked_payload.poll().unwrap();
+
+        assert!(zero_byte_chunked_payload.parts_sent == 1);
+    }
+
 }

@@ -319,18 +319,9 @@ impl S3File {
                     })
                     .collect::<bf::Result<Vec<String>>>()
             })
-            .map_or(
-                Ok(None),
-                |maybe_dir| {
-                    maybe_dir.map(|dir| {
-                       if dir.is_empty() {
-                           None
-                       } else {
-                           Some(dir)
-                       }
-                    })
-                }
-            )?;
+            .map_or(Ok(None), |maybe_dir| {
+                maybe_dir.map(|dir| if dir.is_empty() { None } else { Some(dir) })
+            })?;
 
         // And the resulting metadata so we can pull the file size:
         let metadata = fs::metadata(file_path)?;
@@ -768,7 +759,7 @@ mod tests {
 
         match result {
             Err(err) => panic!("failed to get directory {:?}", err),
-            Ok(s3_file) => assert!(s3_file.file_path == None) 
+            Ok(s3_file) => assert!(s3_file.file_path == None),
         }
     }
 }
