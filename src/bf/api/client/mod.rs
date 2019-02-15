@@ -32,7 +32,7 @@ use bf::config::{Config, Environment};
 use bf::model::upload::MultipartUploadId;
 use bf::model::{
     self, DatasetId, DatasetNodeId, ImportId, OrganizationId, PackageId, SessionToken,
-    TemporaryCredential, UserId,
+    TemporaryCredential, UserId, FileUpload,
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -635,25 +635,30 @@ impl Blackfynn {
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let results = files
+        let s3_files: bf::Result<Vec<model::S3File>> = files
             .into_iter()
-            .enumerate()
-            .map(|(id, file)| {
-                model::S3File::new(path.as_ref(), file.as_ref(), Some(Into::into(id as u64)))
-            })
-            .collect::<Result<Vec<_>, _>>();
+            .map(|file| FileUpload::new_flat_directory_upload(path.as_ref().join(file)))
+            .collect::<bf::Result<Vec<_>>>()
+            .and_then(|file_uploads| file_uploads
+                      .iter()
+                      .enumerate()
+                      .map(|(id, file_upload): (usize, &FileUpload)| {
+                          file_upload.to_s3_file(Some(Into::into(id as u64)))
+                      }).collect()
+            );
 
-        let s3_files = match results {
-            Ok(good) => good,
-            Err(e) => return into_future_trait(future::err(e)),
-        };
+        let bf = self.clone();
 
-        post!(
-            self,
-            "/files/upload/preview",
-            params!("append" => if append { "true" } else { "false" }),
-            &request::UploadPreview::new(&s3_files)
-        )
+        let post = s3_files
+            .into_future()
+            .and_then(move |s3_files| post!(
+                bf,
+                "/files/upload/preview",
+                params!("append" => if append { "true" } else { "false" }),
+                &request::UploadPreview::new(&s3_files)
+            ));
+
+        into_future_trait(post)
     }
 
     /// Get a S3 uploader.
@@ -708,8 +713,8 @@ impl Blackfynn {
     /// Generate a preview of the files to be uploaded.
     pub fn preview_upload_using_upload_service<P, Q>(
         &self,
-        organization_id: &OrganizationId,
-        dataset_id: &DatasetId,
+        organization_id: OrganizationId,
+        dataset_id: DatasetId,
         path: P,
         files: &[Q],
         append: bool,
@@ -719,37 +724,46 @@ impl Blackfynn {
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let results = files
+        let s3_files: bf::Result<Vec<model::S3File>> = files
             .into_iter()
-            .enumerate()
-            .map(|(id, file)| {
-                let id: Option<model::upload::UploadId> = Some(Into::into(id as u64));
-
+            .map(|file| {
                 if is_directory_upload {
-                    model::S3File::retaining_file_path(path.as_ref(), file.as_ref(), id)
+                    FileUpload::new_recursive_directory_upload(
+                        path.as_ref(),
+                        file.as_ref()
+                    )
                 } else {
-                    model::S3File::new(path.as_ref(), file.as_ref(), id)
+                    FileUpload::new_flat_directory_upload(
+                        path.as_ref().join(file)
+                    )
                 }
             })
-            .collect::<Result<Vec<_>, _>>();
+            .collect::<bf::Result<Vec<_>>>()
+            .and_then(|file_uploads| file_uploads
+                      .iter()
+                      .enumerate().map(|(id, file_upload): (usize, &FileUpload)| {
+                          file_upload.to_s3_file(Some(Into::into(id as u64)))
+                      }).collect()
+            );
 
-        let s3_files = match results {
-            Ok(good) => good,
-            Err(e) => return into_future_trait(future::err(e)),
-        };
+        let bf = self.clone();
 
-        post!(
-            self,
-            route!(
-                "/upload/preview/organizations/{organization_id}",
-                organization_id
-            ),
-            params!(
-                "append" => if append { "true" } else { "false" },
-                "dataset_id" => String::from(dataset_id.clone())
-            ),
-            &request::UploadPreview::new(&s3_files)
-        )
+        let post = s3_files
+            .into_future()
+            .and_then(move |s3_files| post!(
+                bf,
+                route!(
+                    "/upload/preview/organizations/{organization_id}",
+                    organization_id
+                ),
+                params!(
+                    "append" => if append { "true" } else { "false" },
+                    "dataset_id" => String::from(dataset_id)
+                ),
+                &request::UploadPreview::new(&s3_files)
+            ));
+
+        into_future_trait(post)
     }
 
     /// Upload a batch of files using the upload service.
@@ -1919,8 +1933,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        &organization_id,
-                        &dataset_int_id,
+                        organization_id.clone(),
+                        dataset_int_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
@@ -2011,8 +2025,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        &organization_id,
-                        &dataset_int_id,
+                        organization_id.clone(),
+                        dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2137,8 +2151,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        &organization_id,
-                        &dataset_int_id,
+                        organization_id.clone(),
+                        dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2233,8 +2247,8 @@ pub mod tests {
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     bf.preview_upload_using_upload_service(
-                        &organization_id,
-                        &dataset_int_id,
+                        organization_id.clone(),
+                        dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*files_with_path,
                         false,

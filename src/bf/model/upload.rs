@@ -179,48 +179,201 @@ pub struct ChunkedUploadProperties {
     total_chunks: usize,
 }
 
-/// A non canonical but validated path to a file
-///
-/// `file_name` is the name of the file being uploaded
-///
-/// `destination_path` represents the location in the platform
-/// the file will be uploaded to
-///
-/// `metadata` is the metadata of the file being uploaded
-struct NormalizedPath {
-    file_name: String,
-    destination_path: Option<Vec<String>>,
-    metadata: fs::Metadata,
+/// A type representing a file to be uploaded.
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileUpload {
+    RecursiveDirectoryUpload {
+        base_path: PathBuf,
+        relative_path: PathBuf,
+    },
+    FlatDirectoryUpload {
+        absolute_path: PathBuf,
+    },
 }
+impl FileUpload {
+    /// Returns a FileUpload object that represents a single file
+    /// within a flat directory upload. This means that this and all
+    /// other files in this upload have the same parent directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `absolute_path` - The absolute path of the file to be uploaded
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let flat_upload = FileUpload::new_flat_directory_upload(
+    ///   "/Users/matt/my_file.txt"
+    /// );
+    /// ```
+    pub fn new_flat_directory_upload<P: AsRef<Path>>(absolute_path: P) -> bf::Result<Self> {
+        let absolute_path = absolute_path.as_ref();
 
-impl NormalizedPath {
-    pub fn new(
-        file_name: String,
-        destination_path: Option<Vec<String>>,
-        metadata: fs::Metadata,
-    ) -> Self {
-        Self {
-            file_name,
-            destination_path,
-            metadata,
+        let absolute_path = if absolute_path.is_absolute() {
+            absolute_path.to_path_buf()
+        } else {
+            absolute_path.canonicalize()?
+        };
+
+        ensure!(
+            absolute_path.exists(),
+            format!("File does not exist: {:?}", absolute_path)
+        );
+        ensure!(
+            absolute_path.is_file(),
+            format!("File is not a regular file: {:?}", absolute_path)
+        );
+
+        Ok(FileUpload::FlatDirectoryUpload {
+            absolute_path: absolute_path.to_path_buf(),
+        })
+    }
+
+    /// Returns a FileUpload object that represents a single file
+    /// within a recursive directory upload. This means that this and
+    /// all other files in this upload have the same base directory,
+    /// but could have different parent directories.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_path` - The path from which the recursive upload was started
+    /// * `file_path` - The path to this file, relative to the parent of the `base_path`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let recursive_upload = FileUpload::new_recursive_directory_upload(
+    ///   "/Users/matt/folder_to_recursivly_upload",                // base_path
+    ///   "folder_to_recursivly_upload/nested_folder/my_file.txt",  // file_path
+    /// );
+    /// ```
+    pub fn new_recursive_directory_upload<P: AsRef<Path>, Q: AsRef<Path>>(
+        base_path: P,
+        file_path: Q,
+    ) -> bf::Result<Self> {
+        let base_path = base_path.as_ref().canonicalize()?;
+        ensure!(
+            base_path.is_dir(),
+            format!("Not a directory: {:?}", base_path)
+        );
+
+        // the base path should actually be the parent of the given
+        // base path in order to put all files into a collection
+        let base_path = base_path.parent().ok_or_else(|| {
+            bf::error::ErrorKind::NoPathParentError(base_path.to_path_buf())
+        })?;
+
+        // create a full file path in order to check that it is valid
+        let file_path = base_path.join(file_path);
+
+        ensure!(
+            base_path.is_dir(),
+            format!("Not a directory: {:?}", base_path)
+        );
+        ensure!(file_path.is_file(), format!("Not a file: {:?}", file_path));
+
+        // strip the base_path from the file_path to make it relative again
+        let file_path = file_path.strip_prefix(&base_path)?;
+
+        Ok(FileUpload::RecursiveDirectoryUpload {
+            base_path: base_path.to_path_buf(),
+            relative_path: file_path.to_path_buf(),
+        })
+    }
+
+    /// Get the absolute path on the local filesystem of the file that
+    /// is represented by this FileUpload object
+    fn absolute_file_path(&self) -> PathBuf {
+        match self {
+            FileUpload::RecursiveDirectoryUpload {
+                base_path,
+                relative_path,
+            } => base_path.join(relative_path.to_path_buf()),
+            FileUpload::FlatDirectoryUpload { absolute_path } => absolute_path.to_path_buf(),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn file_name(&self) -> &String {
-        &self.file_name
+    /// Get the name of the file that is represented by this
+    /// FileUpload object
+    fn file_name(&self) -> bf::Result<String> {
+        let absolute_path = self.absolute_file_path();
+        absolute_path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .map(|file_name| file_name.to_string())
+            .ok_or_else(|| format!("Could not get filename: {:?}", absolute_path).into())
     }
-    #[allow(dead_code)]
-    pub fn destination_path(&self) -> Option<&Vec<String>> {
-        self.destination_path.as_ref()
+
+    /// Get the size of the file that is represented by this
+    /// FileUpload object
+    fn file_size(&self) -> bf::Result<u64> {
+        let metadata = fs::metadata(self.absolute_file_path())?;
+        Ok(metadata.len())
     }
-    #[allow(dead_code)]
-    pub fn metadata(&self) -> &fs::Metadata {
-        &self.metadata
+
+    /// Get the elements of the path where this file will be stored on
+    /// the platform.
+    ///
+    /// 'None' means that the file will live at the root of the
+    /// dataset or target collection. All nonrecursive uploads will
+    /// have `None` as their destionation path, recursive uploads will
+    /// have all elements of the local `file_path` starting at the
+    /// `base_path`.
+    fn destination_path(&self) -> bf::Result<Option<Vec<String>>> {
+        match self {
+            FileUpload::RecursiveDirectoryUpload { base_path, .. } => {
+                let absolute_path = self.absolute_file_path();
+
+                let destination_path = absolute_path.parent().ok_or_else(|| {
+                    bf::error::ErrorKind::NoPathParentError(absolute_path.to_path_buf())
+                })?;
+                let destination_path = destination_path.strip_prefix(base_path)?;
+                let destination_path = destination_path
+                    .to_path_buf()
+                    .iter()
+                    .map(|os_string| {
+                        os_string
+                            .to_str()
+                            .map(|dir| dir.to_string())
+                            .ok_or_else(|| {
+                                bf::error::ErrorKind::InvalidUnicodePathError(
+                                    destination_path.to_path_buf(),
+                                )
+                                .into()
+                            })
+                    })
+                    .collect::<bf::Result<Vec<String>>>()?;
+                if destination_path.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(destination_path))
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Transform this `FileUpload` object into an `S3File`
+    pub fn to_s3_file(&self, upload_id: Option<UploadId>) -> bf::Result<S3File> {
+        let file_size = self.file_size()?;
+        let file_name = self.file_name()?;
+        let destination_path = self.destination_path()?;
+
+        Ok(S3File::new(
+            file_name,
+            file_size,
+            destination_path,
+            upload_id,
+        ))
     }
 }
 
-/// A type representing a file to be uploaded.
+/// A generic serializeable type that represents all file upload
+/// types.
+///
+/// This is a representation of a FileUpload that is understood and
+/// readable by the upload service.
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3File {
@@ -246,185 +399,58 @@ fn file_chunks<P: AsRef<Path>>(
 }
 
 impl S3File {
-    /// path is expected to be a base directory, and file is expected to be a filename + extension.
-    /// When path and file are joined with a separator, a full (but not necessarily absolute) file
-    /// path is constructed.
-    ///
-    /// If neither condition hold, this function will return an error
-    fn normalize<P: AsRef<Path>, Q: AsRef<Path>>(path: P, file: Q) -> bf::Result<NormalizedPath> {
-        let directory_path = path.as_ref();
-        let file_path: PathBuf = directory_path.join(file.as_ref()).canonicalize()?;
-        if !file_path.is_file() {
-            return Err(bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Not a file: {:?}", file_path),
-            ))
-            .into());
-        };
-        if !file_path.exists() {
-            return Err(bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Could not read: {:?}", file_path),
-            ))
-            .into());
-        };
-
-        // Get the file name as a String:
-        let file_name: bf::Result<String> = file_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| bf::error::ErrorKind::InvalidUnicodePathError(file_path.clone()).into())
-            .map(String::from);
-
-        let file_name = file_name?;
-
-        let canonical_dir_path = directory_path.canonicalize()?;
-
-        let file_path_copy = file_path.clone();
-
-        // the cannonical file path without the cannonical path of the
-        // the direcctory being uploaded to
-        // eg
-        // "/user/pete/data/sample/image.png" is the canonical file_path
-        // "/user/pete/" is the canonical_dir_path
-        // result upload_dir_path is "/data/sample/"
-        let upload_dir_path = file_path_copy
-            .strip_prefix(&canonical_dir_path)
-            .map_err(|err| {
-                bf::error::Error::with_chain(
-                    err,
-                    format!(
-                        "could not strip prefix from {:?} with {:?}",
-                        file_path_copy, canonical_dir_path
-                    ),
-                )
-            })?;
-
-        // the directory the file is to be uploaded to
-        let destination_path: Option<Vec<String>> = upload_dir_path
-            .parent()
-            .map(|path| {
-                path.to_path_buf()
-                    .iter()
-                    .map(|os_string| {
-                        os_string
-                            .to_str()
-                            .map(|dir| dir.to_string())
-                            .ok_or_else(|| {
-                                bf::error::ErrorKind::InvalidUnicodePathError(
-                                    path.to_path_buf().clone(),
-                                )
-                                .into()
-                            })
-                    })
-                    .collect::<bf::Result<Vec<String>>>()
-            })
-            .map_or(Ok(None), |maybe_dir| {
-                maybe_dir.map(|dir| if dir.is_empty() { None } else { Some(dir) })
-            })?;
-
-        // And the resulting metadata so we can pull the file size:
-        let metadata = fs::metadata(file_path)?;
-
-        Ok(NormalizedPath::new(file_name, destination_path, metadata))
-    }
-
     #[allow(dead_code)]
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<P: AsRef<Path>, Q: AsRef<Path>>(
-        path: P,
-        file: Q,
+    pub fn new(
+        file_name: String,
+        file_size: u64,
+        destination_path: Option<Vec<String>>,
         upload_id: Option<UploadId>,
-    ) -> bf::Result<Self> {
-        let normalized_path = Self::normalize(path.as_ref(), file.as_ref())?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             upload_id,
-            file_name: normalized_path.file_name,
-            size: normalized_path.metadata.len(),
+            file_name,
+            size: file_size,
             chunked_upload: None,
             multipart_upload_id: None,
-            file_path: normalized_path.destination_path,
-        })
-    }
-
-    /// Construct a S3File with the a `file_path` that is the difference
-    /// from the `file_path` to the `directory_path`
-    ///
-    /// for `file_path` = "/data/sample/image.png" and
-    /// `directory_path` = "data/" then the resulting `file_path`
-    /// on the `S3File` will be "data/sample"
-    pub fn retaining_file_path<P: AsRef<Path>, Q: AsRef<Path>>(
-        directory_path: Q,
-        file_path: P,
-        // perview path should be expected uploaded directory
-        upload_id: Option<UploadId>,
-    ) -> bf::Result<Self> {
-        let directory_path = directory_path.as_ref();
-        let file_path = file_path.as_ref();
-
-        if !directory_path.is_dir() {
-            return Err(bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Provided path was not a directory: {:?}", directory_path),
-            ))
-            .into());
+            file_path: destination_path,
         }
-
-        let root_dir_path = directory_path.parent().ok_or_else(|| {
-            bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Could not destructure path: {:?}", directory_path),
-            ))
-        })?;
-
-        S3File::new(root_dir_path, file_path, upload_id)
-    }
-
-    #[allow(dead_code)]
-    pub fn from_file_path<P: AsRef<Path>>(
-        file_path: P,
-        upload_id: Option<UploadId>,
-    ) -> bf::Result<Self> {
-        let file_path = file_path.as_ref();
-        let path = file_path.parent().ok_or_else(|| {
-            bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Could not destructure path: {:?}", file_path),
-            ))
-        })?;
-        let file = file_path.file_name().ok_or_else(|| {
-            bf::error::ErrorKind::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Could not destructure path: {:?}", file_path),
-            ))
-        })?;
-        S3File::new(path, file, upload_id)
     }
 
     #[allow(dead_code)]
     pub fn with_chunk_size(self, chunk_size: Option<u64>) -> Self {
+        let size = self.size;
         Self {
-            upload_id: self.upload_id.clone(),
-            file_name: self.file_name.clone(),
+            upload_id: self.upload_id,
+            file_name: self.file_name,
             size: self.size,
             chunked_upload: chunk_size.map(|c| ChunkedUploadProperties {
                 chunk_size: c,
-                total_chunks: (self.size as f64 / c as f64).floor() as usize + 1,
+                total_chunks: (size as f64 / c as f64).floor() as usize + 1,
             }),
             multipart_upload_id: self.multipart_upload_id,
             file_path: self.file_path,
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_multipart_upload_id(self, multipart_upload_id: Option<MultipartUploadId>) -> Self {
         Self {
-            upload_id: self.upload_id.clone(),
-            file_name: self.file_name.clone(),
+            upload_id: self.upload_id,
+            file_name: self.file_name,
             size: self.size,
             chunked_upload: self.chunked_upload,
             multipart_upload_id,
+            file_path: self.file_path,
+        }
+    }
+
+    pub fn with_upload_id(self, upload_id: UploadId) -> Self {
+        Self {
+            upload_id: Some(upload_id),
+            file_name: self.file_name,
+            size: self.size,
+            chunked_upload: self.chunked_upload,
+            multipart_upload_id: self.multipart_upload_id,
             file_path: self.file_path,
         }
     }
@@ -732,9 +758,10 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let result = S3File::retaining_file_path(path, file, None);
+        let s3_file = FileUpload::new_recursive_directory_upload(path, file)
+            .and_then(|file_upload| file_upload.to_s3_file(None));
 
-        match result {
+        match s3_file {
             Err(err) => panic!("failed to get directory {:?}", err),
             Ok(s3_file) => {
                 assert!(s3_file.file_path == Some(vec!["data".to_string(), "small".to_string()]))
@@ -742,22 +769,25 @@ mod tests {
         }
     }
 
+    #[test]
     pub fn during_directory_upload_directory_and_a_file_must_be_used() {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
         let file_copy = file.clone();
 
-        let result = S3File::retaining_file_path(file, file_copy, None);
+        let s3_file = FileUpload::new_recursive_directory_upload(file, file_copy)
+            .and_then(|file_upload| file_upload.to_s3_file(None));
 
-        assert!(result.is_err(), true);
+        assert!(s3_file.is_err(), true);
     }
 
     #[test]
     pub fn during_non_directory_upload_file_path_is_none() {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let result = S3File::from_file_path(file, None);
+        let s3_file = FileUpload::new_flat_directory_upload(file)
+            .and_then(|file_upload| file_upload.to_s3_file(None));
 
-        match result {
+        match s3_file {
             Err(err) => panic!("failed to get directory {:?}", err),
             Ok(s3_file) => assert!(s3_file.file_path == None),
         }

@@ -29,5 +29,5 @@ pub use self::package::{Package, PackageId, PackageState, PackageType};
 pub use self::property::Property;
 pub use self::security::{TemporaryCredential, UploadCredential};
 pub use self::team::Team;
-pub use self::upload::{ImportId, ManifestEntry, PackagePreview, S3File};
+pub use self::upload::{ImportId, ManifestEntry, PackagePreview, S3File, FileUpload};
 pub use self::user::{User, UserId};
