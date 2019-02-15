@@ -70,7 +70,7 @@ impl fmt::Display for ImportId {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct UploadId(u64);
 
 impl UploadId {
@@ -183,11 +183,13 @@ pub struct ChunkedUploadProperties {
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileUpload {
-    RecursiveDirectoryUpload {
+    RecursiveUpload {
+        id: UploadId,
         base_path: PathBuf,
         relative_path: PathBuf,
     },
-    FlatDirectoryUpload {
+    NonRecursiveUpload {
+        id: UploadId,
         absolute_path: PathBuf,
     },
 }
@@ -198,18 +200,21 @@ impl FileUpload {
     ///
     /// # Arguments
     ///
+    /// * `id` - An identifier for this upload. This can be used to tie
+    ///          the correct entry in the response from the Blackfynn upload
+    ///          service back to this file.
     /// * `absolute_path` - The absolute path of the file to be uploaded
     ///
     /// # Example
     ///
     /// ```
-    /// use blackfynn::model::FileUpload;
+    /// use blackfynn::model::{FileUpload, UploadId};
     ///
-    /// let flat_upload = FileUpload::new_flat_directory_upload(
-    ///   "/Users/matt/my_file.txt"
+    /// let non_recursive_upload = FileUpload::new_non_recursive_upload(
+    ///   UploadId::from(1), "/Users/matt/my_file.txt"
     /// );
     /// ```
-    pub fn new_flat_directory_upload<P: AsRef<Path>>(absolute_path: P) -> bf::Result<Self> {
+    pub fn new_non_recursive_upload<P: AsRef<Path>>(id: UploadId, absolute_path: P) -> bf::Result<Self> {
         let absolute_path = absolute_path.as_ref();
 
         let absolute_path = if absolute_path.is_absolute() {
@@ -227,7 +232,8 @@ impl FileUpload {
             format!("File is not a regular file: {:?}", absolute_path)
         );
 
-        Ok(FileUpload::FlatDirectoryUpload {
+        Ok(FileUpload::NonRecursiveUpload {
+            id,
             absolute_path: absolute_path.to_path_buf(),
         })
     }
@@ -239,20 +245,25 @@ impl FileUpload {
     ///
     /// # Arguments
     ///
+    /// * `id` - An identifier for this upload. This can be used to tie
+    ///          the correct entry in the response from the Blackfynn upload
+    ///          service back to this file.
     /// * `base_path` - The path from which the recursive upload was started
     /// * `file_path` - The path to this file, relative to the parent of the `base_path`
     ///
     /// # Example
     ///
     /// ```
-    /// use blackfynn::model::FileUpload;
+    /// use blackfynn::model::{FileUpload, UploadId};
     ///
-    /// let recursive_upload = FileUpload::new_recursive_directory_upload(
+    /// let recursive_upload = FileUpload::new_recursive_upload(
+    ///   UploadId::from(1),                                        // id
     ///   "/Users/matt/folder_to_recursivly_upload",                // base_path
     ///   "folder_to_recursivly_upload/nested_folder/my_file.txt",  // file_path
     /// );
     /// ```
-    pub fn new_recursive_directory_upload<P: AsRef<Path>, Q: AsRef<Path>>(
+    pub fn new_recursive_upload<P: AsRef<Path>, Q: AsRef<Path>>(
+        id: UploadId,
         base_path: P,
         file_path: Q,
     ) -> bf::Result<Self> {
@@ -280,7 +291,8 @@ impl FileUpload {
         // strip the base_path from the file_path to make it relative again
         let file_path = file_path.strip_prefix(&base_path)?;
 
-        Ok(FileUpload::RecursiveDirectoryUpload {
+        Ok(FileUpload::RecursiveUpload {
+            id,
             base_path: base_path.to_path_buf(),
             relative_path: file_path.to_path_buf(),
         })
@@ -290,11 +302,20 @@ impl FileUpload {
     /// is represented by this FileUpload object
     fn absolute_file_path(&self) -> PathBuf {
         match self {
-            FileUpload::RecursiveDirectoryUpload {
+            FileUpload::RecursiveUpload {
+                id: _,
                 base_path,
                 relative_path,
             } => base_path.join(relative_path.to_path_buf()),
-            FileUpload::FlatDirectoryUpload { absolute_path } => absolute_path.to_path_buf(),
+            FileUpload::NonRecursiveUpload { id: _, absolute_path } => absolute_path.to_path_buf(),
+        }
+    }
+
+    /// Get the upload ID of this particular FileUpload object.
+    fn id(&self) -> UploadId {
+        match self {
+            FileUpload::RecursiveUpload { id, .. } => *id,
+            FileUpload::NonRecursiveUpload { id, .. } => *id,
         }
     }
 
@@ -326,7 +347,7 @@ impl FileUpload {
     /// `base_path`.
     fn destination_path(&self) -> bf::Result<Option<Vec<String>>> {
         match self {
-            FileUpload::RecursiveDirectoryUpload { base_path, .. } => {
+            FileUpload::RecursiveUpload { base_path, .. } => {
                 let absolute_path = self.absolute_file_path();
 
                 let destination_path = absolute_path.parent().ok_or_else(|| {
@@ -359,7 +380,7 @@ impl FileUpload {
     }
 
     /// Transform this `FileUpload` object into an `S3File`
-    pub fn to_s3_file(&self, upload_id: Option<UploadId>) -> bf::Result<S3File> {
+    pub fn to_s3_file(&self) -> bf::Result<S3File> {
         let file_size = self.file_size()?;
         let file_name = self.file_name()?;
         let destination_path = self.destination_path()?;
@@ -368,7 +389,7 @@ impl FileUpload {
             file_name,
             file_size,
             destination_path,
-            upload_id,
+            Some(self.id()),
         ))
     }
 }
@@ -419,6 +440,32 @@ impl S3File {
             multipart_upload_id: None,
             file_path: destination_path,
         }
+    }
+
+    #[allow(dead_code)]
+    #[allow(clippy::new_ret_no_self)]
+    pub fn from_file_path(
+        file_path: String,
+        destination_path: Option<Vec<String>>,
+        upload_id: Option<UploadId>,
+    ) -> bf::Result<Self> {
+        let file_path: PathBuf = file_path.into();
+
+        let metadata = fs::metadata(file_path.clone())?;
+        let file_size = metadata.len();
+
+        let file_name = file_path.file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| bf::ErrorKind::InvalidUnicodePathError(file_path.clone()))?;
+
+        Ok(Self {
+            upload_id,
+            file_name: file_name.to_string(),
+            size: file_size,
+            chunked_upload: None,
+            multipart_upload_id: None,
+            file_path: destination_path
+        })
     }
 
     #[allow(dead_code)]
@@ -482,6 +529,11 @@ impl S3File {
     #[allow(dead_code)]
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    #[allow(dead_code)]
+    pub fn destination_path(&self) -> Option<&Vec<String>> {
+        self.file_path.as_ref()
     }
 
     #[allow(dead_code)]
@@ -762,8 +814,8 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/").to_owned();
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let s3_file = FileUpload::new_recursive_directory_upload(path, file)
-            .and_then(|file_upload| file_upload.to_s3_file(None));
+        let s3_file = FileUpload::new_recursive_upload(UploadId(1), path, file)
+            .and_then(|file_upload| file_upload.to_s3_file());
 
         match s3_file {
             Err(err) => panic!("failed to get directory {:?}", err),
@@ -778,8 +830,8 @@ mod tests {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
         let file_copy = file.clone();
 
-        let s3_file = FileUpload::new_recursive_directory_upload(file, file_copy)
-            .and_then(|file_upload| file_upload.to_s3_file(None));
+        let s3_file = FileUpload::new_recursive_upload(UploadId(1), file, file_copy)
+            .and_then(|file_upload| file_upload.to_s3_file());
 
         assert!(s3_file.is_err(), true);
     }
@@ -788,8 +840,8 @@ mod tests {
     pub fn during_non_directory_upload_file_path_is_none() {
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/example.csv").to_owned();
 
-        let s3_file = FileUpload::new_flat_directory_upload(file)
-            .and_then(|file_upload| file_upload.to_s3_file(None));
+        let s3_file = FileUpload::new_non_recursive_upload(UploadId(1), file)
+            .and_then(|file_upload| file_upload.to_s3_file());
 
         match s3_file {
             Err(err) => panic!("failed to get directory {:?}", err),
