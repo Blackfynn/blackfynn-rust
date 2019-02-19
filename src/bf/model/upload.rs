@@ -2,7 +2,7 @@
 
 use std::borrow::Borrow;
 use std::fmt;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::{cmp, fs};
 

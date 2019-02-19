@@ -713,8 +713,8 @@ impl Blackfynn {
     /// Generate a preview of the files to be uploaded.
     pub fn preview_upload_using_upload_service<P, Q>(
         &self,
-        organization_id: OrganizationId,
-        dataset_id: DatasetId,
+        organization_id: &OrganizationId,
+        dataset_id: &DatasetId,
         path: P,
         files: &[Q],
         append: bool,
@@ -747,6 +747,8 @@ impl Blackfynn {
             );
 
         let bf = self.clone();
+        let organization_id = organization_id.clone();
+        let dataset_id = dataset_id.clone();
 
         let post = s3_files
             .into_future()
@@ -1933,8 +1935,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        organization_id.clone(),
-                        dataset_int_id,
+                        &organization_id.clone(),
+                        &dataset_int_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
                         false,
@@ -2025,8 +2027,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        organization_id.clone(),
-                        dataset_int_id,
+                        &organization_id.clone(),
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2151,8 +2153,8 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        organization_id.clone(),
-                        dataset_int_id,
+                        &organization_id.clone(),
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
                         false,
@@ -2247,8 +2249,8 @@ pub mod tests {
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     bf.preview_upload_using_upload_service(
-                        organization_id.clone(),
-                        dataset_int_id,
+                        &organization_id.clone(),
+                        &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*files_with_path,
                         false,
