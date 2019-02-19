@@ -203,6 +203,8 @@ impl FileUpload {
     /// # Example
     ///
     /// ```
+    /// use blackfynn::model::FileUpload;
+    ///
     /// let flat_upload = FileUpload::new_flat_directory_upload(
     ///   "/Users/matt/my_file.txt"
     /// );
@@ -243,6 +245,8 @@ impl FileUpload {
     /// # Example
     ///
     /// ```
+    /// use blackfynn::model::FileUpload;
+    ///
     /// let recursive_upload = FileUpload::new_recursive_directory_upload(
     ///   "/Users/matt/folder_to_recursivly_upload",                // base_path
     ///   "folder_to_recursivly_upload/nested_folder/my_file.txt",  // file_path
