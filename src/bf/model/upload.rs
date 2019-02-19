@@ -264,9 +264,9 @@ impl FileUpload {
 
         // the base path should actually be the parent of the given
         // base path in order to put all files into a collection
-        let base_path = base_path.parent().ok_or_else(|| {
-            bf::error::ErrorKind::NoPathParentError(base_path.to_path_buf())
-        })?;
+        let base_path = base_path
+            .parent()
+            .ok_or_else(|| bf::error::ErrorKind::NoPathParentError(base_path.to_path_buf()))?;
 
         // create a full file path in order to check that it is valid
         let file_path = base_path.join(file_path);

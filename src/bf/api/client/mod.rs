@@ -31,8 +31,8 @@ use bf;
 use bf::config::{Config, Environment};
 use bf::model::upload::MultipartUploadId;
 use bf::model::{
-    self, DatasetId, DatasetNodeId, ImportId, OrganizationId, PackageId, SessionToken,
-    TemporaryCredential, UserId, FileUpload,
+    self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
+    TemporaryCredential, UserId,
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -636,27 +636,29 @@ impl Blackfynn {
         Q: AsRef<Path>,
     {
         let s3_files: bf::Result<Vec<model::S3File>> = files
-            .into_iter()
+            .iter()
             .map(|file| FileUpload::new_flat_directory_upload(path.as_ref().join(file)))
             .collect::<bf::Result<Vec<_>>>()
-            .and_then(|file_uploads| file_uploads
-                      .iter()
-                      .enumerate()
-                      .map(|(id, file_upload): (usize, &FileUpload)| {
-                          file_upload.to_s3_file(Some(Into::into(id as u64)))
-                      }).collect()
-            );
+            .and_then(|file_uploads| {
+                file_uploads
+                    .iter()
+                    .enumerate()
+                    .map(|(id, file_upload): (usize, &FileUpload)| {
+                        file_upload.to_s3_file(Some(Into::into(id as u64)))
+                    })
+                    .collect()
+            });
 
         let bf = self.clone();
 
-        let post = s3_files
-            .into_future()
-            .and_then(move |s3_files| post!(
+        let post = s3_files.into_future().and_then(move |s3_files| {
+            post!(
                 bf,
                 "/files/upload/preview",
                 params!("append" => if append { "true" } else { "false" }),
                 &request::UploadPreview::new(&s3_files)
-            ));
+            )
+        });
 
         into_future_trait(post)
     }
@@ -725,34 +727,31 @@ impl Blackfynn {
         Q: AsRef<Path>,
     {
         let s3_files: bf::Result<Vec<model::S3File>> = files
-            .into_iter()
+            .iter()
             .map(|file| {
                 if is_directory_upload {
-                    FileUpload::new_recursive_directory_upload(
-                        path.as_ref(),
-                        file.as_ref()
-                    )
+                    FileUpload::new_recursive_directory_upload(path.as_ref(), file.as_ref())
                 } else {
-                    FileUpload::new_flat_directory_upload(
-                        path.as_ref().join(file)
-                    )
+                    FileUpload::new_flat_directory_upload(path.as_ref().join(file))
                 }
             })
             .collect::<bf::Result<Vec<_>>>()
-            .and_then(|file_uploads| file_uploads
-                      .iter()
-                      .enumerate().map(|(id, file_upload): (usize, &FileUpload)| {
-                          file_upload.to_s3_file(Some(Into::into(id as u64)))
-                      }).collect()
-            );
+            .and_then(|file_uploads| {
+                file_uploads
+                    .iter()
+                    .enumerate()
+                    .map(|(id, file_upload): (usize, &FileUpload)| {
+                        file_upload.to_s3_file(Some(Into::into(id as u64)))
+                    })
+                    .collect()
+            });
 
         let bf = self.clone();
         let organization_id = organization_id.clone();
         let dataset_id = dataset_id.clone();
 
-        let post = s3_files
-            .into_future()
-            .and_then(move |s3_files| post!(
+        let post = s3_files.into_future().and_then(move |s3_files| {
+            post!(
                 bf,
                 route!(
                     "/upload/preview/organizations/{organization_id}",
@@ -763,7 +762,8 @@ impl Blackfynn {
                     "dataset_id" => String::from(dataset_id)
                 ),
                 &request::UploadPreview::new(&s3_files)
-            ));
+            )
+        });
 
         into_future_trait(post)
     }
@@ -1935,7 +1935,7 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
+                        &organization_id,
                         &dataset_int_id,
                         (*TEST_DATA_DIR).to_string(),
                         &*TEST_FILES,
@@ -2027,7 +2027,7 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
+                        &organization_id,
                         &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*MEDIUM_TEST_FILES,
@@ -2249,7 +2249,7 @@ pub mod tests {
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
+                        &organization_id,
                         &dataset_int_id,
                         (*MEDIUM_TEST_DATA_DIR).to_string(),
                         &*files_with_path,
