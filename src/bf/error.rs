@@ -24,6 +24,7 @@ error_chain! {
         Cancelled(futures::Canceled);
         HttpError(hyper::error::Error);
         IoError(io::Error);
+        StripPrefixError(path::StripPrefixError);
         JsonError(serde_json::Error);
         S3AbortMultipartUploadError(rusoto_s3::AbortMultipartUploadError);
         S3CreateMultipartUploadError(rusoto_s3::CreateMultipartUploadError);
@@ -50,6 +51,10 @@ error_chain! {
         InvalidUnicodePathError(p: path::PathBuf) {
             description("API: Invalid unicode characters in path")
             display("API: Invalid unicode characters in path :: {:?}", p)
+        }
+        NoPathParentError(p: path::PathBuf) {
+            description("Could not get the parent of path")
+            display("Could not get the parent of path :: {:?}", p)
         }
         NoOrganizationSetError {
             description("API: No organization set")
