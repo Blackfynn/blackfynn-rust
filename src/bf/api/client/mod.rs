@@ -29,7 +29,7 @@ use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
 use bf;
 use bf::config::{Config, Environment};
-use bf::model::upload::{MultipartUploadId};
+use bf::model::upload::MultipartUploadId;
 use bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
     TemporaryCredential, UserId, UploadId
