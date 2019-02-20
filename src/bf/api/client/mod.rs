@@ -32,7 +32,7 @@ use bf::config::{Config, Environment};
 use bf::model::upload::MultipartUploadId;
 use bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
-    TemporaryCredential, UserId,
+    TemporaryCredential, UserId, UploadId
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -628,7 +628,7 @@ impl Blackfynn {
     pub fn preview_upload<P, Q>(
         &self,
         path: P,
-        files: &[Q],
+        files: &[(UploadId, Q)],
         append: bool,
     ) -> bf::Future<response::UploadPreview>
     where
@@ -637,15 +637,12 @@ impl Blackfynn {
     {
         let s3_files: bf::Result<Vec<model::S3File>> = files
             .iter()
-            .map(|file| FileUpload::new_flat_directory_upload(path.as_ref().join(file)))
+            .map(|(id, file)| FileUpload::new_non_recursive_upload(*id, path.as_ref().join(file)))
             .collect::<bf::Result<Vec<_>>>()
             .and_then(|file_uploads| {
                 file_uploads
                     .iter()
-                    .enumerate()
-                    .map(|(id, file_upload): (usize, &FileUpload)| {
-                        file_upload.to_s3_file(Some(Into::into(id as u64)))
-                    })
+                    .map(|file_upload| file_upload.to_s3_file())
                     .collect()
             });
 
@@ -717,8 +714,8 @@ impl Blackfynn {
         &self,
         organization_id: &OrganizationId,
         dataset_id: &DatasetId,
-        path: P,
-        files: &[Q],
+        path: Option<P>,
+        files: &[(UploadId, Q)],
         append: bool,
         is_directory_upload: bool,
     ) -> bf::Future<response::UploadPreview>
@@ -728,21 +725,24 @@ impl Blackfynn {
     {
         let s3_files: bf::Result<Vec<model::S3File>> = files
             .iter()
-            .map(|file| {
+            .map(|(upload_id, file)| {
+                let path = path.as_ref();
                 if is_directory_upload {
-                    FileUpload::new_recursive_directory_upload(path.as_ref(), file.as_ref())
+                    path.ok_or_else(|| {
+                        "Path cannot be None when is_directory_upload is true".into()
+                    })
+                    .and_then(|path| FileUpload::new_recursive_upload(*upload_id, path, file.as_ref()))
+                } else if let Some(path) = path {
+                    FileUpload::new_non_recursive_upload(*upload_id, path.as_ref().join(file))
                 } else {
-                    FileUpload::new_flat_directory_upload(path.as_ref().join(file))
+                    FileUpload::new_non_recursive_upload(*upload_id, file)
                 }
             })
             .collect::<bf::Result<Vec<_>>>()
             .and_then(|file_uploads| {
                 file_uploads
                     .iter()
-                    .enumerate()
-                    .map(|(id, file_upload): (usize, &FileUpload)| {
-                        file_upload.to_s3_file(Some(Into::into(id as u64)))
-                    })
+                    .map(|file_upload| file_upload.to_s3_file())
                     .collect()
             });
 
@@ -1194,6 +1194,14 @@ pub mod tests {
         }
     }
 
+    fn add_upload_ids(file_paths: &Vec<String>) -> Vec<(UploadId, String)> {
+        file_paths
+            .iter()
+            .enumerate()
+            .map(|(id, file)| (UploadId::from(id as u64), file.to_string()))
+            .collect()
+    }
+
     #[test]
     fn login_successfully_locally() {
         let bf = bf();
@@ -1617,9 +1625,10 @@ pub mod tests {
     #[test]
     fn preview_upload_file_working() {
         let preview = run(&bf(), move |bf| {
+            let enumerated_files = add_upload_ids(&*TEST_FILES);
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &*TEST_FILES, false)),
+                    .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &enumerated_files, false)),
             )
         });
         if preview.is_err() {
@@ -1640,7 +1649,7 @@ pub mod tests {
     ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
-            let test_files = test_files.clone();
+            let test_files = add_upload_ids(&test_files);
 
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
@@ -1934,11 +1943,15 @@ pub mod tests {
                     })
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                    let files: Vec<(UploadId, String)> = add_upload_ids(&*TEST_FILES)
+                        .iter()
+                        .map(|(id, file)| (*id, format!("{}/{}", *TEST_DATA_DIR, file)))
+                        .collect();
                     bf.preview_upload_using_upload_service(
                         &organization_id,
                         &dataset_int_id,
-                        (*TEST_DATA_DIR).to_string(),
-                        &*TEST_FILES,
+                        None as Option<String>,
+                        &files,
                         false,
                         false,
                     )
@@ -2026,11 +2039,12 @@ pub mod tests {
                     })
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                    let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
                     bf.preview_upload_using_upload_service(
                         &organization_id,
                         &dataset_int_id,
-                        (*MEDIUM_TEST_DATA_DIR).to_string(),
-                        &*MEDIUM_TEST_FILES,
+                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                        &enumerated_files,
                         false,
                         false,
                     )
@@ -2152,11 +2166,12 @@ pub mod tests {
                     })
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                    let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
                     bf.preview_upload_using_upload_service(
                         &organization_id.clone(),
                         &dataset_int_id,
-                        (*MEDIUM_TEST_DATA_DIR).to_string(),
-                        &*MEDIUM_TEST_FILES,
+                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                        &enumerated_files,
                         false,
                         false,
                     )
@@ -2248,11 +2263,12 @@ pub mod tests {
                         .iter()
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
+                    let enumerated_files = add_upload_ids(&files_with_path);
                     bf.preview_upload_using_upload_service(
                         &organization_id,
                         &dataset_int_id,
-                        (*MEDIUM_TEST_DATA_DIR).to_string(),
-                        &*files_with_path,
+                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                        &enumerated_files,
                         false,
                         true,
                     )
