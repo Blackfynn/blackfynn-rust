@@ -493,11 +493,19 @@ impl Blackfynn {
         let id_or_name = id_or_name.into();
         let id = DatasetNodeId::from(id_or_name.clone());
         let name = id_or_name.clone();
-        let inner = self.clone();
-        into_future_trait(
-            self.get_dataset_by_id(id)
-                .or_else(move |_| inner.get_dataset_by_name(name)),
-        )
+
+        // Definitely not a dataset ID - only try to get by name
+        if !id_or_name.starts_with("N:dataset:") {
+            into_future_trait(self.get_dataset_by_name(name))
+
+        // Even if it looks like an ID it could still be a name - try both methods
+        } else {
+            let inner = self.clone();
+            into_future_trait(
+                self.get_dataset_by_id(id)
+                    .or_else(move |_| inner.get_dataset_by_name(name)),
+            )
+        }
     }
 
     /// Get the collaborators of the data set.
