@@ -488,6 +488,18 @@ impl Blackfynn {
         }))
     }
 
+    /// Get a dataset by ID or by name.
+    pub fn get_dataset<N: Into<String>>(&self, id_or_name: N) -> bf::Future<response::Dataset> {
+        let id_or_name = id_or_name.into();
+        let id = DatasetNodeId::from(id_or_name.clone());
+        let name = id_or_name.clone();
+        let inner = self.clone();
+        into_future_trait(
+            self.get_dataset_by_id(id)
+                .or_else(move |_| inner.get_dataset_by_name(name)),
+        )
+    }
+
     /// Get the collaborators of the data set.
     pub fn get_dataset_collaborators(
         &self,
@@ -1332,6 +1344,34 @@ pub mod tests {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| bf.get_dataset_by_name(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+    }
+
+    #[test]
+    fn fetching_dataset_generic_works_with_name() {
+        let ds = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset(FIXTURE_DATASET_NAME)),
+            )
+        });
+
+        if ds.is_err() {
+            panic!("{}", ds.unwrap_err().display_chain().to_string());
+        }
+    }
+
+    #[test]
+    fn fetching_dataset_generic_works_with_id() {
+        let ds = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.get_dataset(DatasetNodeId::new(FIXTURE_DATASET))),
             )
         });
 
