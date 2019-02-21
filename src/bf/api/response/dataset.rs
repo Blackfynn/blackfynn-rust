@@ -1,7 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::ops::Deref;
 
 use bf::api::response::package::Package;
@@ -164,48 +163,5 @@ impl ChangeResponse {
     #[allow(dead_code)]
     pub fn message(&self) -> Option<&String> {
         self.message.as_ref()
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CollaboratorChanges {
-    changes: HashMap<String, ChangeResponse>,
-    counts: CollaboratorCounts,
-}
-
-impl CollaboratorChanges {
-    /// Get all the changes that occurred due to the share action.
-    #[allow(dead_code)]
-    pub fn changes(&self) -> &HashMap<String, ChangeResponse> {
-        &self.changes
-    }
-
-    /// Get a count of all the changes that occurred due to the share action.
-    #[allow(dead_code)]
-    pub fn counts(&self) -> &CollaboratorCounts {
-        &self.counts
-    }
-
-    /// Get a summary of the changes that occurred.
-    #[allow(dead_code)]
-    pub fn summary(&self) -> String {
-        let mut text = String::new();
-        let n = self.changes.len();
-        for (i, (ref entity_id, ref change_response)) in self.changes.iter().enumerate() {
-            let line = format!("{entity_id}: ", entity_id = entity_id);
-            text.push_str(&line);
-            if change_response.success() {
-                text.push_str("OK");
-            } else {
-                let error = "[Something went wrong]".to_string();
-                let blurb = change_response.message().unwrap_or(&error);
-                text.push_str(blurb.as_str());
-            }
-            if (i + 1) < n {
-                text.push_str("\n");
-            }
-        }
-        text
     }
 }
