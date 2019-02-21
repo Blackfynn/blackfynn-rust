@@ -32,7 +32,7 @@ use bf::config::{Config, Environment};
 use bf::model::upload::MultipartUploadId;
 use bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
-    TemporaryCredential, UserId, UploadId
+    TemporaryCredential, UploadId,
 };
 use bf::util::futures::{into_future_trait, into_stream_trait};
 
@@ -516,34 +516,6 @@ impl Blackfynn {
         get!(self, route!("/datasets/{id}/collaborators", id))
     }
 
-    /// Share this data set with another user.
-    pub fn share_dataset(
-        &self,
-        id: DatasetNodeId,
-        users: Vec<UserId>,
-    ) -> bf::Future<response::CollaboratorChanges> {
-        put!(
-            self,
-            route!("/datasets/{id}/collaborators", id),
-            params!(),
-            payload!(users)
-        )
-    }
-
-    /// Unshare this data set with another user.
-    pub fn unshare_dataset(
-        &self,
-        id: DatasetNodeId,
-        users: Vec<UserId>,
-    ) -> bf::Future<response::CollaboratorChanges> {
-        delete!(
-            self,
-            route!("/datasets/{id}/collaborators", id),
-            params!(),
-            payload!(users)
-        )
-    }
-
     /// Update an existing dataset.
     pub fn update_dataset(
         &self,
@@ -751,7 +723,9 @@ impl Blackfynn {
                     path.ok_or_else(|| {
                         "Path cannot be None when is_directory_upload is true".into()
                     })
-                    .and_then(|path| FileUpload::new_recursive_upload(*upload_id, path, file.as_ref()))
+                    .and_then(|path| {
+                        FileUpload::new_recursive_upload(*upload_id, path, file.as_ref())
+                    })
                 } else if let Some(path) = path {
                     FileUpload::new_non_recursive_upload(*upload_id, path.as_ref().join(file))
                 } else {
@@ -1672,13 +1646,13 @@ pub mod tests {
 
     #[test]
     fn preview_upload_file_working() {
-        let preview = run(&bf(), move |bf| {
-            let enumerated_files = add_upload_ids(&*TEST_FILES);
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.preview_upload(&*TEST_DATA_DIR, &enumerated_files, false)),
-            )
-        });
+        let preview =
+            run(&bf(), move |bf| {
+                let enumerated_files = add_upload_ids(&*TEST_FILES);
+                into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                    bf.preview_upload(&*TEST_DATA_DIR, &enumerated_files, false)
+                }))
+            });
         if preview.is_err() {
             panic!("{}", preview.unwrap_err().display_chain().to_string());
         }

@@ -19,9 +19,7 @@ pub struct EmptyMap {}
 // Re-export
 pub use self::account::ApiSession;
 pub use self::channel::Channel;
-pub use self::dataset::{
-    ChangeResponse, CollaboratorChanges, CollaboratorCounts, Collaborators, Dataset,
-};
+pub use self::dataset::{ChangeResponse, CollaboratorCounts, Collaborators, Dataset};
 pub use self::file::{File, Files};
 pub use self::organization::{Organization, Organizations};
 pub use self::package::Package;
