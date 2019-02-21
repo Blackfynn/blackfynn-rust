@@ -15,7 +15,7 @@ The official Blackfynn Rust library.
 ## Usage
 ```
 [dependencies]
-blackfynn = { git = "https://github.com/Blackfynn/blackfynn-rust.git", tag = "v0.7.0" }
+blackfynn = { git = "https://github.com/Blackfynn/blackfynn-rust.git", tag = "v0.8.0" }
 ```
 
 ## License
