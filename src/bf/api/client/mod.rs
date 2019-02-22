@@ -454,11 +454,17 @@ impl Blackfynn {
     }
 
     /// Create a new dataset.
-    pub fn create_dataset(
+    pub fn create_dataset<N: Into<String>, D: Into<String>>(
         &self,
-        payload: request::dataset::Create,
+        name: N,
+        description: Option<D>,
     ) -> bf::Future<response::Dataset> {
-        post!(self, "/datasets/", params!(), payload!(payload))
+        post!(
+            self,
+            "/datasets/",
+            params!(),
+            payload!(request::dataset::Create::new(name, description))
+        )
     }
 
     /// Get a specific dataset by its ID.
@@ -517,16 +523,17 @@ impl Blackfynn {
     }
 
     /// Update an existing dataset.
-    pub fn update_dataset(
+    pub fn update_dataset<N: Into<String>, D: Into<String>>(
         &self,
         id: DatasetNodeId,
-        payload: request::dataset::Update,
+        name: N,
+        description: Option<D>,
     ) -> bf::Future<response::Dataset> {
         put!(
             self,
             route!("/datasets/{id}", id),
             params!(),
-            payload!(payload)
+            payload!(request::dataset::Update::new(name, description))
         )
     }
 
@@ -537,11 +544,18 @@ impl Blackfynn {
     }
 
     /// Create a new package.
-    pub fn create_package(
+    pub fn create_package<N: Into<String>, D: Into<DatasetNodeId>>(
         &self,
-        payload: request::package::Create,
+        name: N,
+        package_type: request::package::PackageType,
+        dataset: D,
     ) -> bf::Future<response::Package> {
-        post!(self, "/packages/", params!(), payload!(payload))
+        post!(
+            self,
+            "/packages/",
+            params!(),
+            payload!(request::package::Create::new(name, package_type, dataset))
+        )
     }
 
     /// Get a specific package.
@@ -555,16 +569,16 @@ impl Blackfynn {
     }
 
     /// Update an existing package.
-    pub fn update_package(
+    pub fn update_package<N: Into<String>>(
         &self,
         id: PackageId,
-        payload: request::package::Update,
+        name: N,
     ) -> bf::Future<response::Package> {
         put!(
             self,
             route!("/packages/{id}", id),
             params!(),
-            payload!(payload)
+            payload!(request::package::Update::new(name))
         )
     }
 
@@ -1549,22 +1563,16 @@ pub mod tests {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
-                        bf.create_dataset(request::dataset::Create::new(
+                        bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        ))
+                        )
                         .map(|ds| (bf, ds))
                     })
                     .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, id)| {
-                        bf.update_dataset(
-                            id.clone(),
-                            request::dataset::Update::new(
-                                "new-dataset-name",
-                                None as Option<String>,
-                            ),
-                        )
-                        .map(|_| (bf, id))
+                        bf.update_dataset(id.clone(), "new-dataset-name", None as Option<String>)
+                            .map(|_| (bf, id))
                     })
                     .and_then(move |(bf, id)| {
                         let id = id.clone();
@@ -1593,28 +1601,25 @@ pub mod tests {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
-                        bf.create_dataset(request::dataset::Create::new(
+                        bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        ))
+                        )
                         .map(|ds| (bf, ds))
                     })
                     .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, ds_id)| {
-                        bf.create_package(request::package::Create::new(
+                        bf.create_package(
                             rand_suffix("$agent-test-package"),
                             Default::default(),
                             ds_id.clone(),
-                        ))
+                        )
                         .map(|pkg| (bf, ds_id, pkg))
                     })
                     .and_then(move |(bf, ds_id, pkg)| {
                         let pkg_id = pkg.take().id().clone();
-                        bf.update_package(
-                            pkg_id.clone(),
-                            request::package::Update::new("new-package-name"),
-                        )
-                        .map(|_| (bf, pkg_id, ds_id))
+                        bf.update_package(pkg_id.clone(), "new-package-name")
+                            .map(|_| (bf, pkg_id, ds_id))
                     })
                     .and_then(move |(bf, pkg_id, ds_id)| {
                         bf.get_package_by_id(pkg_id).and_then(|pkg| {
@@ -1676,10 +1681,10 @@ pub mod tests {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
-                        bf.create_dataset(request::dataset::Create::new(
+                        bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                        ))
+                        )
                         .map(move |ds| (bf, ds))
                     })
                     .and_then(move |(bf, ds)| {
@@ -1948,10 +1953,10 @@ pub mod tests {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
-                    bf.create_dataset(request::dataset::Create::new(
+                    bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                    ))
+                    )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
                 .and_then(|(bf, dataset_id, dataset_int_id)| {
@@ -2044,10 +2049,10 @@ pub mod tests {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
-                    bf.create_dataset(request::dataset::Create::new(
+                    bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                    ))
+                    )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
                 .and_then(|(bf, dataset_id, dataset_int_id)| {
@@ -2171,10 +2176,10 @@ pub mod tests {
             let f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
-                    bf.create_dataset(request::dataset::Create::new(
+                    bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                    ))
+                    )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
                 .and_then(|(bf, dataset_id, dataset_int_id)| {
@@ -2264,10 +2269,10 @@ pub mod tests {
             let upload_f = bf
                 .login(TEST_API_KEY, TEST_SECRET_KEY)
                 .and_then(move |_| {
-                    bf.create_dataset(request::dataset::Create::new(
+                    bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                    ))
+                    )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
                 .and_then(|(bf, dataset_id, dataset_int_id)| {

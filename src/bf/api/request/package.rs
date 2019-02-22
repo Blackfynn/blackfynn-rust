@@ -1,6 +1,8 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model::{DatasetNodeId, PackageType, Property};
+use bf::model::{DatasetNodeId, Property};
+
+pub use bf::model::PackageType;
 
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
