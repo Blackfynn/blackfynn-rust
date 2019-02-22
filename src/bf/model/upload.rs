@@ -214,7 +214,10 @@ impl FileUpload {
     ///   UploadId::from(1), "/Users/matt/my_file.txt"
     /// );
     /// ```
-    pub fn new_non_recursive_upload<P: AsRef<Path>>(id: UploadId, absolute_path: P) -> bf::Result<Self> {
+    pub fn new_non_recursive_upload<P: AsRef<Path>>(
+        id: UploadId,
+        absolute_path: P,
+    ) -> bf::Result<Self> {
         let absolute_path = absolute_path.as_ref();
 
         let absolute_path = if absolute_path.is_absolute() {
@@ -307,7 +310,10 @@ impl FileUpload {
                 base_path,
                 relative_path,
             } => base_path.join(relative_path.to_path_buf()),
-            FileUpload::NonRecursiveUpload { id: _, absolute_path } => absolute_path.to_path_buf(),
+            FileUpload::NonRecursiveUpload {
+                id: _,
+                absolute_path,
+            } => absolute_path.to_path_buf(),
         }
     }
 
@@ -454,7 +460,8 @@ impl S3File {
         let metadata = fs::metadata(file_path.clone())?;
         let file_size = metadata.len();
 
-        let file_name = file_path.file_name()
+        let file_name = file_path
+            .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| bf::ErrorKind::InvalidUnicodePathError(file_path.clone()))?;
 
@@ -464,7 +471,7 @@ impl S3File {
             size: file_size,
             chunked_upload: None,
             multipart_upload_id: None,
-            file_path: destination_path
+            file_path: destination_path,
         })
     }
 
