@@ -1559,29 +1559,35 @@ pub mod tests {
 
     #[test]
     fn creating_then_updating_then_delete_dataset_successful() {
+        let new_dataset_name = rand_suffix("$new-test-dataset".to_string());
         let result = run(&bf(), move |bf| {
+            let new_dataset_name = new_dataset_name.clone();
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
                     .and_then(move |_| {
+                        let new_dataset_name = new_dataset_name.clone();
                         bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
                         )
-                        .map(|ds| (bf, ds))
+                        .map(|ds| (bf, ds, new_dataset_name))
                     })
-                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
-                    .and_then(move |(bf, id)| {
-                        bf.update_dataset(id.clone(), "new-dataset-name", None as Option<String>)
-                            .map(|_| (bf, id))
+                    .and_then(move |(bf, ds, new_dataset_name)| {
+                        Ok(ds.id().clone()).map(|id| (bf, id, new_dataset_name))
                     })
-                    .and_then(move |(bf, id)| {
+                    .and_then(move |(bf, id, new_dataset_name)| {
+                        bf.update_dataset(
+                            id.clone(),
+                            new_dataset_name.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|_| (bf, id, new_dataset_name))
+                    })
+                    .and_then(move |(bf, id, new_dataset_name)| {
                         let id = id.clone();
                         bf.get_dataset_by_id(id.clone())
-                            .and_then(|ds| {
-                                assert_eq!(
-                                    ds.take().name().clone(),
-                                    "new-dataset-name".to_string()
-                                );
+                            .and_then(move |ds| {
+                                assert_eq!(ds.take().name().clone(), new_dataset_name);
                                 Ok(id)
                             })
                             .map(|id| (bf, id))
