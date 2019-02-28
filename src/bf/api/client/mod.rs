@@ -544,12 +544,17 @@ impl Blackfynn {
     }
 
     /// Create a new package.
-    pub fn create_package<N: Into<String>, D: Into<DatasetNodeId>>(
+    pub fn create_package<N, D, P>(
         &self,
         name: N,
-        package_type: request::package::PackageType,
+        package_type: P,
         dataset: D,
-    ) -> bf::Future<response::Package> {
+    ) -> bf::Future<response::Package>
+    where
+        D: Into<DatasetNodeId>,
+        N: Into<String>,
+        P: Into<String>,
+    {
         post!(
             self,
             "/packages/",
@@ -1617,7 +1622,7 @@ pub mod tests {
                     .and_then(move |(bf, ds_id)| {
                         bf.create_package(
                             rand_suffix("$agent-test-package"),
-                            Default::default(),
+                            "Text",
                             ds_id.clone(),
                         )
                         .map(|pkg| (bf, ds_id, pkg))

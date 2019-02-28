@@ -25,7 +25,7 @@ pub use self::channel::Channel;
 pub use self::dataset::{Dataset, DatasetId, DatasetNodeId, DatasetStatus};
 pub use self::file::File;
 pub use self::organization::{Organization, OrganizationId};
-pub use self::package::{Package, PackageId, PackageState, PackageType};
+pub use self::package::{Package, PackageId};
 pub use self::property::Property;
 pub use self::security::{TemporaryCredential, UploadCredential};
 pub use self::team::Team;

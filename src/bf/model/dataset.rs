@@ -2,11 +2,11 @@
 
 use std::borrow::Borrow;
 use std::ops::Deref;
+use std::fmt;
+
+use chrono::{DateTime, Utc};
 
 use bf::api::{BFId, BFName};
-use bf::model;
-use chrono::{DateTime, Utc};
-use std::fmt;
 
 /// An node identifier for a Blackfynn dataset (ex. N:dataset:c905919f-56f5-43ae-9c2a-8d5d542c133b).
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -137,10 +137,43 @@ pub enum DatasetStatus {
 pub struct Dataset {
     id: DatasetNodeId,
     name: String,
-    state: Option<model::PackageState>,
+    // -----------------------
+    // Existing package states
+    // -----------------------
+    // * DELETING
+    // * ERROR
+    // * EXPORTING
+    // * EXPORT_FAILED
+    // * FAILED
+    // * IMPORTING
+    // * IMPORT_FAILED
+    // * PENDING
+    // * READY
+    // * RUNNABLE
+    // * RUNNING
+    // * STARTING
+    // * SUBMITTED
+    // * SUCCEEDED
+    // * UNAVAILABLE
+    state: Option<String>,
     description: Option<String>,
-    #[serde(deserialize_with = "model::PackageType::deserialize")]
-    package_type: Option<model::PackageType>,
+    // ----------------------
+    // Existing package types
+    // ----------------------
+    // * CSV
+    // * Collection
+    // * Image
+    // * MRI
+    // * MSWord
+    // * PDF
+    // * Slide
+    // * Tabular
+    // * Text
+    // * TimeSeries
+    // * Unknown
+    // * Unsupported
+    // * Video
+    package_type: Option<String>,
     status: DatasetStatus,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -174,7 +207,7 @@ impl Dataset {
     }
 
     #[allow(dead_code)]
-    pub fn state(&self) -> Option<&model::PackageState> {
+    pub fn state(&self) -> Option<&String> {
         self.state.as_ref()
     }
 
@@ -184,7 +217,7 @@ impl Dataset {
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> Option<&model::PackageType> {
+    pub fn package_type(&self) -> Option<&String> {
         self.package_type.as_ref()
     }
 

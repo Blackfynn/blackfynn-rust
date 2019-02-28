@@ -579,16 +579,13 @@ enum ETLJobType {
 #[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ETLJob {
-    // TODO: make this typed
     file_type: String,
-    #[serde(deserialize_with = "model::PackageType::deserialize")]
-    package_type: Option<model::PackageType>,
+    package_type: Option<String>,
     uploaded_files: Vec<String>,
     upload_directory: String,
     storage_directory: String,
     encryption_key: model::S3EncryptionKeyId,
     size: u64,
-    // has_Workflow: bool
 }
 
 impl ETLJob {
@@ -598,7 +595,7 @@ impl ETLJob {
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> Option<&model::PackageType> {
+    pub fn package_type(&self) -> Option<&String> {
         self.package_type.as_ref()
     }
 
@@ -684,7 +681,7 @@ impl ManifestEntry {
 
     #[allow(dead_code)]
     /// Package type of the upload.
-    pub fn package_type(&self) -> Option<&model::PackageType> {
+    pub fn package_type(&self) -> Option<&String> {
         self.manifest.job_contents().package_type()
     }
 
@@ -727,8 +724,7 @@ impl ManifestEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PackagePreview {
     package_name: String,
-    #[serde(deserialize_with = "model::PackageType::deserialize")]
-    package_type: Option<model::PackageType>,
+    package_type: Option<String>,
     file_type: Option<String>,
     import_id: ImportId,
     files: Vec<S3File>,
@@ -743,7 +739,7 @@ impl PackagePreview {
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> Option<&model::PackageType> {
+    pub fn package_type(&self) -> Option<&String> {
         self.package_type.as_ref()
     }
 

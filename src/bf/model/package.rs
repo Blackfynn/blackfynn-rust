@@ -5,7 +5,6 @@ use std::fmt;
 use std::ops::Deref;
 
 use chrono::{DateTime, Utc};
-use serde::{de, Deserialize, Deserializer};
 
 use bf::api::{BFId, BFName};
 use bf::model;
@@ -75,80 +74,6 @@ impl fmt::Display for PackageId {
     }
 }
 
-/// A package's processing state.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum PackageState {
-    Deleting,
-    Error,
-    Failed,
-    Importing,
-    Pending,
-    Ready,
-    Runnable,
-    Running,
-    Starting,
-    Submitted,
-    Succeeded,
-    Unavailable,
-}
-
-/// A package's type.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum PackageType {
-    Collection,
-    DataSet,
-    CSV,
-    Image,
-    MRI,
-    MSWord,
-    PDF,
-    Slide,
-    Tabular,
-    Text,
-    TimeSeries,
-    Unknown,
-    Unsupported,
-    Video,
-}
-
-impl Default for PackageType {
-    fn default() -> Self {
-        PackageType::Unknown
-    }
-}
-
-impl PackageType {
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<PackageType>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        match s {
-            Some(t) => match t.to_lowercase().as_ref() {
-                "collection" => Ok(Some(PackageType::Collection)),
-                // TODO: Remove API support for dataset package type
-                "dataset" => Ok(Some(PackageType::DataSet)),
-                "csv" => Ok(Some(PackageType::CSV)),
-                "image" => Ok(Some(PackageType::Image)),
-                "mri" => Ok(Some(PackageType::MRI)),
-                "msword" => Ok(Some(PackageType::MSWord)),
-                "pdf" => Ok(Some(PackageType::PDF)),
-                "slide" => Ok(Some(PackageType::Slide)),
-                "tabular" => Ok(Some(PackageType::Tabular)),
-                "text" => Ok(Some(PackageType::Text)),
-                "timeseries" => Ok(Some(PackageType::TimeSeries)),
-                "unknown" => Ok(Some(PackageType::Unknown)),
-                "unsupported" => Ok(Some(PackageType::Unsupported)),
-                "video" => Ok(Some(PackageType::Video)),
-                _ => Err(de::Error::custom(format!("Invalid package type: {}", t))),
-            },
-            None => Ok(None),
-        }
-    }
-}
-
 /// A "package" representation on the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,9 +81,8 @@ pub struct Package {
     id: PackageId,
     name: String,
     dataset_id: model::DatasetNodeId,
-    package_state: Option<PackageState>,
-    #[serde(deserialize_with = "PackageType::deserialize")]
-    package_type: Option<PackageType>,
+    package_state: Option<String>,
+    package_type: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -191,12 +115,12 @@ impl Package {
     }
 
     #[allow(dead_code)]
-    pub fn package_state(&self) -> Option<&PackageState> {
+    pub fn package_state(&self) -> Option<&String> {
         self.package_state.as_ref()
     }
 
     #[allow(dead_code)]
-    pub fn package_type(&self) -> Option<&PackageType> {
+    pub fn package_type(&self) -> Option<&String> {
         self.package_type.as_ref()
     }
 
