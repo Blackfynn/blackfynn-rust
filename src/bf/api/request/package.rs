@@ -2,26 +2,25 @@
 
 use bf::model::{DatasetNodeId, Property};
 
-pub use bf::model::PackageType;
-
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Create {
     name: String,
-    package_type: PackageType,
+    package_type: String,
     properties: Vec<Property>,
     dataset: DatasetNodeId,
 }
 
 impl Create {
-    pub fn new<P, Q>(name: P, package_type: PackageType, dataset: Q) -> Self
+    pub fn new<D, N, P>(name: N, package_type: P, dataset: D) -> Self
     where
+        D: Into<DatasetNodeId>,
+        N: Into<String>,
         P: Into<String>,
-        Q: Into<DatasetNodeId>,
     {
         Self {
             name: name.into(),
-            package_type,
+            package_type: package_type.into(),
             properties: vec![],
             dataset: dataset.into(),
         }
