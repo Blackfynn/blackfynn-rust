@@ -13,3 +13,4 @@ mod util;
 pub use bf::api::Blackfynn;
 pub use bf::config::{Config, Environment};
 pub use bf::types::{Error, ErrorKind, Future, Result, ResultExt, Stream};
+pub use bf::util::futures::into_future_trait;

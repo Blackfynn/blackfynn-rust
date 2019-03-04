@@ -30,4 +30,4 @@ mod bf;
 pub use bf::api::{BFChildren, BFId, BFName, Blackfynn};
 pub use bf::config::{Config, Environment};
 pub use bf::types::{Error, ErrorKind, Future, Result, ResultExt, Stream};
-pub use bf::{api, error, model};
+pub use bf::{api, error, model, into_future_trait};
