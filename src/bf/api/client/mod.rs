@@ -75,10 +75,10 @@ type Nothing = serde_json::Value;
 // debug logging
 macro_rules! bf_debug {
     ($msg:expr, $($var:ident = $value:expr),*) => {
-        if env::var("BLACKFYNN_LOG_LEVEL").unwrap_or_else(|_| String::from("INFO"))
-            == "DEBUG"
+        if env::var("LOGLEVEL").unwrap_or_else(|_| String::from("info")).to_lowercase()
+            == "debug"
         {
-            eprintln!("[DEBUG] {}", format!($msg, $($var = $value),*))
+            eprintln!("{}", format!($msg, $($var = $value),*));
         }
     }
 }
@@ -246,7 +246,6 @@ impl Blackfynn {
         S: Into<String>,
     {
         let url = self.get_url();
-        let method_clone = method.clone();
 
         // Build the request url: config environment base + route:
         let mut use_url = url.clone();
@@ -295,41 +294,35 @@ impl Blackfynn {
                     req.headers_mut().insert(header_name, header_value);
                 }
 
-                // Make the actual request:
-                client.request(req).map_err(move |e| {
-                    bf::Error::with_chain(
-                        e,
-                        format!(
-                            "bf:request<{method}:{url}>:execute",
-                            method = method.to_string(),
-                            url = use_url.to_string()
-                        ),
-                    )
-                })
-            })
-            .and_then(move |resp| {
-                let method_string = method_clone.to_string();
-                let method_string_clone = method_string.clone();
+                let reporting_url: String = uri.to_string();
+                let reporting_method: String = method.to_string();
+                let client_request_err: String = format!(
+                    "bf:request<{method}:{url}>:execute",
+                    method = reporting_method,
+                    url = reporting_url
+                );
 
-                let url_string = url.to_string();
-                let url_string_clone = url_string.clone();
+                // Make the actual request:
+                client
+                    .request(req)
+                    .map(|response| (reporting_url, reporting_method, response))
+                    .map_err(move |e| bf::Error::with_chain(e, client_request_err))
+            })
+            .and_then(move |(reporting_url, reporting_method, response)| {
+                let response_err: String = format!(
+                    "bf:request<{method}:{url}>:response",
+                    method = reporting_method,
+                    url = reporting_url
+                );
 
                 // Check the status code. And 5XX code will result in the
                 // future terminating with an error containing the message
                 // emitted from the API:
-                let status_code = resp.status();
-                resp.into_body()
+                let status_code = response.status();
+                response
+                    .into_body()
                     .concat2()
-                    .map_err(move |e| {
-                        bf::Error::with_chain(
-                            e,
-                            format!(
-                                "bf:request<{method}:{url}>:response",
-                                method = method_string,
-                                url = url_string
-                            ),
-                        )
-                    })
+                    .map_err(move |e| bf::Error::with_chain(e, response_err))
                     .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
                     .and_then(
                         move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
@@ -342,14 +335,14 @@ impl Blackfynn {
                                     .into(),
                                 );
                             }
-                            future::ok(body)
+                            future::ok((reporting_url, reporting_method, body))
                         },
                     )
-                    .and_then(move |body: hyper::Chunk| {
+                    .and_then(move |(reporting_url, reporting_method, body)| {
                         bf_debug!(
                             "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                            method = method_string_clone,
-                            url = url_string_clone,
+                            method = reporting_method,
+                            url = reporting_url,
                             payload = Self::chunk_to_string(&body)
                         );
                         // Finally, attempt to parse the JSON response into a typeful representation:
@@ -358,8 +351,8 @@ impl Blackfynn {
                                 e,
                                 format!(
                                     "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = method_string_clone.clone(),
-                                    url = url_string_clone.clone(),
+                                    method = reporting_method.clone(),
+                                    url = url.clone(),
                                     payload = Self::chunk_to_string(&body)
                                 ),
                             )
@@ -781,6 +774,7 @@ impl Blackfynn {
         into_future_trait(post)
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Upload a batch of files using the upload service.
     pub fn upload_file_chunks_to_upload_service<P, C>(
         &self,
@@ -1620,12 +1614,8 @@ pub mod tests {
                     })
                     .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, ds_id)| {
-                        bf.create_package(
-                            rand_suffix("$agent-test-package"),
-                            "Text",
-                            ds_id.clone(),
-                        )
-                        .map(|pkg| (bf, ds_id, pkg))
+                        bf.create_package(rand_suffix("$agent-test-package"), "Text", ds_id.clone())
+                            .map(|pkg| (bf, ds_id, pkg))
                     })
                     .and_then(move |(bf, ds_id, pkg)| {
                         let pkg_id = pkg.take().id().clone();
