@@ -446,18 +446,27 @@ impl Blackfynn {
         get!(self, "/datasets/")
     }
 
-    /// Create a new dataset.
-    pub fn create_dataset<N: Into<String>, D: Into<String>>(
+    /// Create a new dataset using full request object parameters.
+    pub fn create_dataset_with_request(
         &self,
-        name: N,
-        description: Option<D>,
-        automatically_process_packages: bool,
+        payload: request::dataset::Create,
     ) -> bf::Future<response::Dataset> {
         post!(
             self,
             "/datasets/",
             params!(),
-            payload!(request::dataset::Create::new(name, description, automatically_process_packages))
+            payload!(payload)
+        )
+    }
+
+    /// Create a new dataset with some request parameter defaults.
+    pub fn create_dataset<N: Into<String>, D: Into<String>>(
+        &self,
+        name: N,
+        description: Option<D>,
+    ) -> bf::Future<response::Dataset> {
+        self.create_dataset_with_request(
+            request::dataset::Create::new(name, description, false)
         )
     }
 
@@ -1580,7 +1589,6 @@ pub mod tests {
                         bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                            false,
                         )
                         .map(|ds| (bf, ds, new_dataset_name))
                     })
@@ -1622,7 +1630,6 @@ pub mod tests {
                         bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                            false,
                         )
                         .map(|ds| (bf, ds))
                     })
@@ -1718,7 +1725,6 @@ pub mod tests {
                         bf.create_dataset(
                             rand_suffix("$agent-test-dataset".to_string()),
                             Some("A test dataset created by the agent".to_string()),
-                            false,
                         )
                         .map(move |ds| (bf, ds))
                     })
@@ -1991,7 +1997,6 @@ pub mod tests {
                     bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                        false,
                     )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
@@ -2088,7 +2093,6 @@ pub mod tests {
                     bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                        false,
                     )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
@@ -2216,7 +2220,6 @@ pub mod tests {
                     bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                        false,
                     )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
@@ -2310,7 +2313,6 @@ pub mod tests {
                     bf.create_dataset(
                         rand_suffix("$agent-test-dataset".to_string()),
                         Some("A test dataset created by the agent".to_string()),
-                        false,
                     )
                     .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
                 })
