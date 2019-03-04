@@ -17,7 +17,7 @@ impl Create {
         Self {
             name: name.into(),
             description: description.map(Into::into),
-            automatically_process_packages: automatically_process_packages,
+            automatically_process_packages,
         }
     }
 }
