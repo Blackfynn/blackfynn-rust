@@ -587,6 +587,17 @@ impl Blackfynn {
         )
     }
 
+    /// Process a package in the UPLOADED state.
+    pub fn process_package(
+        &self,
+        id: PackageId,
+    ) -> bf::Future<()> {
+        put!(
+            self,
+            route!("/packages/{id}/process", id)
+        )
+    }
+
     /// Get the members that belong to the current users organization.
     pub fn get_members(&self) -> bf::Future<Vec<model::User>> {
         into_future_trait(match self.current_organization() {
@@ -1644,6 +1655,25 @@ pub mod tests {
 
         if result.is_err() {
             panic!("{}", result.unwrap_err().display_chain().to_string());
+        }
+    }
+
+    #[test]
+    fn process_package_failed() {
+        let resp = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.process_package(PackageId::new(FIXTURE_PACKAGE)))
+            )
+        });
+
+        if let Err(e) = resp {
+            match e {
+                bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
+                    assert_eq!(status.as_u16(), 400)
+                }
+                _ => assert!(false),
+            }
         }
     }
 
