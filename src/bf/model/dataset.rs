@@ -1,8 +1,8 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use std::borrow::Borrow;
-use std::ops::Deref;
 use std::fmt;
+use std::ops::Deref;
 
 use chrono::{DateTime, Utc};
 
