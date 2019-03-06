@@ -12,4 +12,4 @@ mod util;
 // Re-export
 pub use bf::api::Blackfynn;
 pub use bf::config::{Config, Environment};
-pub use bf::types::{Error, ErrorKind, Future, Result, ResultExt, Stream};
+pub use bf::types::{Error, ErrorKind, Future, Result, Stream};
