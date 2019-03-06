@@ -75,10 +75,10 @@ type Nothing = serde_json::Value;
 // debug logging
 macro_rules! bf_debug {
     ($msg:expr, $($var:ident = $value:expr),*) => {
-        if env::var("LOGLEVEL").unwrap_or_else(|_| String::from("info")).to_lowercase()
-            == "debug"
-        {
-            eprintln!("{}", format!($msg, $($var = $value),*));
+        if let Ok(level) = env::var("BLACKFYNN_LOG_LEVEL").or_else(|_| env::var("LOGLEVEL")) {
+            if level.to_lowercase() == "debug" {
+                eprintln!("{}", format!($msg, $($var = $value),*));
+            }
         }
     }
 }
