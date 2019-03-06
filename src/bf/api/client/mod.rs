@@ -8,7 +8,6 @@ pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProg
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::borrow::Borrow;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{iter, time};
@@ -71,17 +70,6 @@ type RequestParam = (String, String);
 type Nothing = serde_json::Value;
 
 // =============================================================================
-
-// debug logging
-macro_rules! bf_debug {
-    ($msg:expr, $($var:ident = $value:expr),*) => {
-        if let Ok(level) = env::var("BLACKFYNN_LOG_LEVEL").or_else(|_| env::var("LOGLEVEL")) {
-            if level.to_lowercase() == "debug" {
-                eprintln!("{}", format!($msg, $($var = $value),*));
-            }
-        }
-    }
-}
 
 // Useful builder macros:
 macro_rules! route {
@@ -339,7 +327,7 @@ impl Blackfynn {
                         },
                     )
                     .and_then(move |(reporting_url, reporting_method, body)| {
-                        bf_debug!(
+                        debug!(
                             "bf:request<{method}:{url}>:serialize:payload = {payload}",
                             method = reporting_method,
                             url = reporting_url,
@@ -817,7 +805,7 @@ impl Blackfynn {
 
             let chunked_file_payload =
                 if let Some(chunked_upload_properties) = file.chunked_upload() {
-                    bf_debug!(
+                    debug!(
                         "bf:upload_file_chunks<file = {file_name}> :: \
                          Chunk size received from the upload service: {chunk_size}.",
                         file_name = file.file_name(),
@@ -832,7 +820,7 @@ impl Blackfynn {
                         progress_callback.clone(),
                     )
                 } else {
-                    bf_debug!(
+                    debug!(
                         "bf:upload_file_chunks<file = {file_name}> :: \
                          No chunk size received from the upload service. \
                          Falling back to default.",
@@ -1036,8 +1024,8 @@ impl Blackfynn {
 
                         ld_err.failed = true;
 
-                        bf_debug!("Upload encountered an error: {error}", error = err);
-                        bf_debug!("Waiting {millis} millis to retry...", millis = delay);
+                        debug!("Upload encountered an error: {error}", error = err);
+                        debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
                         let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
@@ -1046,7 +1034,7 @@ impl Blackfynn {
                                 bf::Error::with_chain(e, "bf:upload_file_chunks_to_upload_service_retries :: Error during timeout")
                             })
                             .map(move |_| {
-                                bf_debug!(
+                                debug!(
                                     "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
                                     try_num = ld_err.try_num, retries = max_retries
                                 );
