@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use url::Url;
 
-use bf::error::{Error, ErrorKind};
+use bf::error::Error;
 use bf::model::S3ServerSideEncryption;
 
 /// Defines the server environment the library is interacting with.
@@ -59,7 +59,7 @@ impl FromStr for Environment {
             "dev" | "development" => Ok(Environment::Development),
             "prod" | "production" => Ok(Environment::Production),
             "local" => Ok(Environment::Local),
-            _ => Err(ErrorKind::EnvParseError(s.to_string()).into()),
+            _ => Err(Error::env_parse_error(s)),
         }
     }
 }

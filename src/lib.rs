@@ -1,11 +1,8 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-// `error_chain!` can recurse deeply
-#![recursion_limit = "1024"]
-
 extern crate chrono;
-#[macro_use]
-extern crate error_chain;
+extern crate failure;
+extern crate failure_derive;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_tls;
@@ -31,5 +28,5 @@ mod bf;
 // Publicly re-export:
 pub use bf::api::{BFChildren, BFId, BFName, Blackfynn};
 pub use bf::config::{Config, Environment};
-pub use bf::types::{Error, ErrorKind, Future, Result, ResultExt, Stream};
+pub use bf::types::{Error, ErrorKind, Future, Result, Stream};
 pub use bf::{api, error, model};
