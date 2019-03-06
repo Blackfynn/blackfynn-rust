@@ -1,6 +1,6 @@
 [package]
 name = "blackfynn"
-version = "0.10.2"
+version = "0.10.3"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
 
@@ -13,6 +13,7 @@ hyper = "^0.12"
 hyper-tls = "^0.3"
 itertools = "^0.7"
 lazy_static = "^1.1"
+log = "^0.4"
 rand = "^0.5"
 rusoto_core = "^0.33"
 rusoto_credential = "^0.12"
