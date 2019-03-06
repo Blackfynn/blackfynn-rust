@@ -1,10 +1,6 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-// `error_chain!` can recurse deeply
-#![recursion_limit = "1024"]
-
 extern crate chrono;
-#[macro_use]
 extern crate failure;
 extern crate failure_derive;
 extern crate futures;

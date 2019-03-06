@@ -366,7 +366,7 @@ impl FileUpload {
                             .to_str()
                             .map(|dir| dir.to_string())
                             .ok_or_else(|| {
-                                Error::invalid_unicode_path(destination_path.to_path_buf()).into()
+                                Error::invalid_unicode_path(destination_path.to_path_buf())
                             })
                     })
                     .collect::<Result<Vec<String>>>()?;
