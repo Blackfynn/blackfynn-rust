@@ -13,27 +13,25 @@ use std::sync::{Arc, Mutex};
 use std::{iter, time};
 
 use futures::{Future as _Future, Stream as _Stream, *};
-
 use hyper;
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper_tls::HttpsConnector;
-
+use log::debug;
 use serde;
 use serde_json;
-
 use tokio;
 
 use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
-use bf::config::{Config, Environment};
-use bf::model::upload::MultipartUploadId;
-use bf::model::{
+use crate::bf::config::{Config, Environment};
+use crate::bf::model::upload::MultipartUploadId;
+use crate::bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
     TemporaryCredential, UploadId,
 };
-use bf::util::futures::{into_future_trait, into_stream_trait};
-use bf::{Error, ErrorKind, Future, Result, Stream};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{Error, ErrorKind, Future, Result, Stream};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
@@ -1039,11 +1037,13 @@ pub mod tests {
     use std::fmt::Debug;
     use std::{cell, fs, path, result, sync, thread, time};
 
-    use bf::api::client::s3::MultipartUploadResult;
+    use lazy_static::lazy_static;
+
+    use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
-    use bf::config::Environment;
-    use bf::util::futures::into_future_trait;
-    use bf::util::rand_suffix;
+    use crate::bf::config::Environment;
+    use crate::bf::util::futures::into_future_trait;
+    use crate::bf::util::rand_suffix;
 
     const TEST_ENVIRONMENT: Environment = Environment::Development;
     const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
@@ -1621,7 +1621,7 @@ pub mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
+    ) -> Box<dyn Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = add_upload_ids(&test_files);

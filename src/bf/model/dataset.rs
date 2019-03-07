@@ -5,8 +5,9 @@ use std::fmt;
 use std::ops::Deref;
 
 use chrono::{DateTime, Utc};
+use serde_derive::{Deserialize, Serialize};
 
-use bf::api::{BFId, BFName};
+use crate::bf::api::{BFId, BFName};
 
 /// An node identifier for a Blackfynn dataset (ex. N:dataset:c905919f-56f5-43ae-9c2a-8d5d542c133b).
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -68,7 +69,7 @@ impl<'a> From<&'a str> for DatasetNodeId {
 }
 
 impl fmt::Display for DatasetNodeId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
@@ -116,7 +117,7 @@ impl From<DatasetId> for String {
 }
 
 impl fmt::Display for DatasetId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }

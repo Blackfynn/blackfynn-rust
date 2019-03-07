@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::Deserialize;
 
-use bf::model;
+use crate::bf::model;
 
 /// The result of a successful login.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]

@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use serde_derive::Serialize;
+
 /// A Blackfynn platform login request.
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,7 +19,7 @@ impl Property {
 }
 
 impl fmt::Display for Property {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}, {})", self.key, self.value)
     }
 }

@@ -1,8 +1,9 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use chrono::{DateTime, Utc};
+use serde_derive::{Deserialize, Serialize};
 
-use bf::model;
+use crate::bf::model;
 
 /// Temporary credentials to perform an action, like uploading a file or stream data.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

@@ -3,7 +3,9 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use bf::model;
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::model;
 
 /// An AWS S3 access key.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

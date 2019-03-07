@@ -3,7 +3,9 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use bf::api::{BFId, BFName};
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::api::{BFId, BFName};
 
 /// An identifier for a team on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

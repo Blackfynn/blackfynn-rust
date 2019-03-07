@@ -3,6 +3,7 @@ name = "blackfynn"
 version = "0.10.4"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
+edition = "2018"
 
 [dependencies]
 chrono = { version = "^0.4", features = ["serde"] }

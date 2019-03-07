@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
-use bf::model;
+use crate::bf::model;
+use serde_derive::Deserialize;
 
 /// Temporary credentials to perform an action, like uploading a file or stream data.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]

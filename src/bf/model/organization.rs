@@ -4,8 +4,10 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::ops::Deref;
 
-use bf::api::{BFId, BFName};
-use bf::model;
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::api::{BFId, BFName};
+use crate::bf::model;
 
 /// An identifier for an organization on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -69,7 +71,7 @@ impl<'a> From<&'a str> for OrganizationId {
 }
 
 impl fmt::Display for OrganizationId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }

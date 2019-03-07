@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::Serialize;
 
-use bf::model::OrganizationId;
+use crate::bf::model::OrganizationId;
 
 /// A user HTTP `PUT` request.
 #[derive(Clone, Hash, PartialEq, Eq, Serialize)]

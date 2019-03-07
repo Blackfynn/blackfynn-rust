@@ -3,8 +3,10 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use bf::api::{response, BFChildren, BFId, BFName};
-use bf::model;
+use serde_derive::Deserialize;
+
+use crate::bf::api::{response, BFChildren, BFId, BFName};
+use crate::bf::model;
 
 // This corresponds to the `objects` map that is returned from `/packages/{:id}`
 // when the `include=` parameter is provided.

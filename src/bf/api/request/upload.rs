@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::Serialize;
 
-use bf::model::S3File;
+use crate::bf::model::S3File;
 
 /// A preview of files to be uploaded to the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

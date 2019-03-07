@@ -3,14 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bf::model::ImportId;
+use crate::bf::model::ImportId;
 
 /// A trait defining a progress indicator callback. Every time a file part
 /// successfully completes, `update` will be called with new, update statistics
 /// for the file.
 pub trait ProgressCallback: Send + Sync {
     /// Called when an uploaded progress update occurs.
-    fn on_update(&self, &ProgressUpdate);
+    fn on_update(&self, _: &ProgressUpdate);
 }
 
 /// An implementation of `ProgressCallback` that does nothing.
