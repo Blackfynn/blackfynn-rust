@@ -1046,28 +1046,27 @@ pub mod tests {
     use crate::bf::util::rand_suffix;
 
     const TEST_ENVIRONMENT: Environment = Environment::Development;
-    const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
-    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_SECRET_KEY");
+    const TEST_API_KEY: &str = env!("BLACKFYNN_API_KEY");
+    const TEST_SECRET_KEY: &str = env!("BLACKFYNN_SECRET_KEY");
 
     // "Blackfynn"
-    const FIXTURE_ORGANIZATION: &'static str =
-        "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
+    const FIXTURE_ORGANIZATION: &str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
 
     // Dedicated agent email (dev)
     #[allow(dead_code)]
-    const FIXTURE_EMAIL: &'static str = "agent-test@blackfynn.com";
+    const FIXTURE_EMAIL: &str = "agent-test@blackfynn.com";
 
     // Dedicated agent user (dev)
     #[allow(dead_code)]
-    const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
+    const FIXTURE_USER: &str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
-    const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
+    const FIXTURE_DATASET: &str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
+    const FIXTURE_DATASET_NAME: &str = "AGENT-DATASET-DO-NOT-DELETE";
 
     // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
-    const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
+    const FIXTURE_PACKAGE: &str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
+    const FIXTURE_PACKAGE_NAME: &str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);

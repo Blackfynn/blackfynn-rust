@@ -270,11 +270,11 @@ pub enum S3ServerSideEncryption {
 
 impl From<S3ServerSideEncryption> for String {
     fn from(encryption_type: S3ServerSideEncryption) -> Self {
-        String::from(Into::<&'static str>::into(encryption_type))
+        String::from(Into::<&str>::into(encryption_type))
     }
 }
 
-impl From<S3ServerSideEncryption> for &'static str {
+impl From<S3ServerSideEncryption> for &str {
     fn from(encryption_type: S3ServerSideEncryption) -> Self {
         match encryption_type {
             S3ServerSideEncryption::KMS => "aws:kms",
