@@ -1543,7 +1543,13 @@ pub mod tests {
         })
         .unwrap();
 
-        assert_eq!(organization_role.role().clone(), "manager".to_string());
+        let organization_role = (
+            organization_role.name().clone(),
+            organization_role.role().clone(),
+        );
+        let expected = ("Blackfynn".to_string(), "manager".to_string());
+
+        assert_eq!(organization_role, expected);
     }
 
     #[test]

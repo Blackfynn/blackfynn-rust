@@ -99,10 +99,20 @@ impl IntoIterator for Organizations {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OrganizationRole {
+    id: String,
+    name: String,
     role: String,
 }
 
 impl OrganizationRole {
+    pub fn id(&self) -> &String {
+        &self.id
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
     pub fn role(&self) -> &String {
         &self.role
     }
