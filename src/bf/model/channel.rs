@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::{Deserialize, Serialize};
 
-use bf::api::BFName;
+use crate::bf::api::BFName;
 
 /// A Blackfynn timeseries channel.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

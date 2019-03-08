@@ -1,15 +1,15 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
 
 use std::borrow::Borrow;
-use std::fmt;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::{cmp, fs};
+use std::{cmp, fmt, fs, result};
 
 use futures::*;
+use serde_derive::{Deserialize, Serialize};
 
-use bf::util::futures::{into_future_trait, into_stream_trait};
-use bf::{self, model};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{model, Error, Future, Result, Stream};
 
 /// An identifier returned by the Blackfynn platform used to group
 /// a collection of files together for uploading.
@@ -65,7 +65,7 @@ impl<'a> From<&'a str> for ImportId {
 }
 
 impl fmt::Display for ImportId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
@@ -117,7 +117,7 @@ impl S3FileChunk {
         file_size: u64,
         chunk_size: u64,
         index: u64,
-    ) -> bf::Result<Self> {
+    ) -> Result<Self> {
         let handle = fs::File::open(path)?;
         Ok(Self {
             handle,
@@ -127,7 +127,7 @@ impl S3FileChunk {
         })
     }
 
-    pub fn read(&mut self) -> bf::Result<Vec<u8>> {
+    pub fn read(&mut self) -> Result<Vec<u8>> {
         let offset = self.chunk_size * self.index;
         assert!(offset <= self.file_size);
         let read_amount = self.file_size - offset;
@@ -217,7 +217,7 @@ impl FileUpload {
     pub fn new_non_recursive_upload<P: AsRef<Path>>(
         id: UploadId,
         absolute_path: P,
-    ) -> bf::Result<Self> {
+    ) -> Result<Self> {
         let absolute_path = absolute_path.as_ref();
 
         let absolute_path = if absolute_path.is_absolute() {
@@ -226,14 +226,13 @@ impl FileUpload {
             absolute_path.canonicalize()?
         };
 
-        ensure!(
-            absolute_path.exists(),
-            format!("File does not exist: {:?}", absolute_path)
-        );
-        ensure!(
-            absolute_path.is_file(),
-            format!("File is not a regular file: {:?}", absolute_path)
-        );
+        if !absolute_path.exists() {
+            return Err(Error::path_does_not_exist(absolute_path));
+        }
+
+        if !absolute_path.is_file() {
+            return Err(Error::path_is_not_a_file(absolute_path));
+        }
 
         Ok(FileUpload::NonRecursiveUpload {
             id,
@@ -269,27 +268,27 @@ impl FileUpload {
         id: UploadId,
         base_path: P,
         file_path: Q,
-    ) -> bf::Result<Self> {
+    ) -> Result<Self> {
         let base_path = base_path.as_ref().canonicalize()?;
-        ensure!(
-            base_path.is_dir(),
-            format!("Not a directory: {:?}", base_path)
-        );
+        if !base_path.is_dir() {
+            return Err(Error::path_is_not_a_directory(base_path));
+        }
 
         // the base path should actually be the parent of the given
         // base path in order to put all files into a collection
         let base_path = base_path
             .parent()
-            .ok_or_else(|| bf::error::ErrorKind::NoPathParentError(base_path.to_path_buf()))?;
+            .ok_or_else(|| Error::no_path_parent(base_path.to_path_buf()))?;
 
         // create a full file path in order to check that it is valid
         let file_path = base_path.join(file_path);
 
-        ensure!(
-            base_path.is_dir(),
-            format!("Not a directory: {:?}", base_path)
-        );
-        ensure!(file_path.is_file(), format!("Not a file: {:?}", file_path));
+        if !base_path.is_dir() {
+            return Err(Error::path_is_not_a_directory(base_path.to_path_buf()));
+        }
+        if !file_path.is_file() {
+            return Err(Error::path_is_not_a_file(file_path));
+        }
 
         // strip the base_path from the file_path to make it relative again
         let file_path = file_path.strip_prefix(&base_path)?;
@@ -327,18 +326,18 @@ impl FileUpload {
 
     /// Get the name of the file that is represented by this
     /// FileUpload object
-    fn file_name(&self) -> bf::Result<String> {
+    fn file_name(&self) -> Result<String> {
         let absolute_path = self.absolute_file_path();
         absolute_path
             .file_name()
             .and_then(|file_name| file_name.to_str())
             .map(|file_name| file_name.to_string())
-            .ok_or_else(|| format!("Could not get filename: {:?}", absolute_path).into())
+            .ok_or_else(|| Error::could_not_get_filename(absolute_path))
     }
 
     /// Get the size of the file that is represented by this
     /// FileUpload object
-    fn file_size(&self) -> bf::Result<u64> {
+    fn file_size(&self) -> Result<u64> {
         let metadata = fs::metadata(self.absolute_file_path())?;
         Ok(metadata.len())
     }
@@ -351,14 +350,14 @@ impl FileUpload {
     /// have `None` as their destionation path, recursive uploads will
     /// have all elements of the local `file_path` starting at the
     /// `base_path`.
-    fn destination_path(&self) -> bf::Result<Option<Vec<String>>> {
+    fn destination_path(&self) -> Result<Option<Vec<String>>> {
         match self {
             FileUpload::RecursiveUpload { base_path, .. } => {
                 let absolute_path = self.absolute_file_path();
 
-                let destination_path = absolute_path.parent().ok_or_else(|| {
-                    bf::error::ErrorKind::NoPathParentError(absolute_path.to_path_buf())
-                })?;
+                let destination_path = absolute_path
+                    .parent()
+                    .ok_or_else(|| Error::no_path_parent(absolute_path.to_path_buf()))?;
                 let destination_path = destination_path.strip_prefix(base_path)?;
                 let destination_path = destination_path
                     .to_path_buf()
@@ -368,13 +367,10 @@ impl FileUpload {
                             .to_str()
                             .map(|dir| dir.to_string())
                             .ok_or_else(|| {
-                                bf::error::ErrorKind::InvalidUnicodePathError(
-                                    destination_path.to_path_buf(),
-                                )
-                                .into()
+                                Error::invalid_unicode_path(destination_path.to_path_buf())
                             })
                     })
-                    .collect::<bf::Result<Vec<String>>>()?;
+                    .collect::<Result<Vec<String>>>()?;
                 if destination_path.is_empty() {
                     Ok(None)
                 } else {
@@ -386,7 +382,7 @@ impl FileUpload {
     }
 
     /// Transform this `FileUpload` object into an `S3File`
-    pub fn to_s3_file(&self) -> bf::Result<S3File> {
+    pub fn to_s3_file(&self) -> Result<S3File> {
         let file_size = self.file_size()?;
         let file_name = self.file_name()?;
         let destination_path = self.destination_path()?;
@@ -420,7 +416,7 @@ fn file_chunks<P: AsRef<Path>>(
     from_path: P,
     file_size: u64,
     chunk_size: u64,
-) -> bf::Result<Vec<S3FileChunk>> {
+) -> Result<Vec<S3FileChunk>> {
     let nchunks = cmp::max(1, (file_size as f64 / chunk_size as f64).ceil() as u64);
     (0..nchunks)
         .map(move |part_number| {
@@ -454,7 +450,7 @@ impl S3File {
         file_path: String,
         destination_path: Option<Vec<String>>,
         upload_id: Option<UploadId>,
-    ) -> bf::Result<Self> {
+    ) -> Result<Self> {
         let file_path: PathBuf = file_path.into();
 
         let metadata = fs::metadata(file_path.clone())?;
@@ -463,7 +459,7 @@ impl S3File {
         let file_name = file_path
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| bf::ErrorKind::InvalidUnicodePathError(file_path.clone()))?;
+            .ok_or_else(|| Error::invalid_unicode_path(file_path.clone()))?;
 
         Ok(Self {
             upload_id,
@@ -544,7 +540,7 @@ impl S3File {
     }
 
     #[allow(dead_code)]
-    pub fn read_bytes<P: AsRef<Path>>(&self, from_path: P) -> bf::Future<Vec<u8>> {
+    pub fn read_bytes<P: AsRef<Path>>(&self, from_path: P) -> Future<Vec<u8>> {
         let file_path: PathBuf = from_path.as_ref().join(self.file_name.to_owned());
         into_future_trait(future::lazy(move || {
             let f = match fs::File::open(file_path) {
@@ -552,13 +548,13 @@ impl S3File {
                 Err(e) => return future::err(e.into()),
             };
             f.bytes()
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<result::Result<Vec<_>, _>>()
                 .map_err(Into::into)
                 .into_future()
         }))
     }
 
-    pub fn chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> bf::Stream<S3FileChunk> {
+    pub fn chunks<P: AsRef<Path>>(&self, from_path: P, chunk_size: u64) -> Stream<S3FileChunk> {
         let file_path = from_path.as_ref().join(self.file_name.clone());
         match file_chunks(file_path, self.size(), chunk_size) {
             Ok(ch) => into_stream_trait(stream::iter_ok(ch)),

@@ -8,33 +8,30 @@ pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProg
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::borrow::Borrow;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{iter, time};
 
-use futures::*;
-
+use futures::{Future as _Future, Stream as _Stream, *};
 use hyper;
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper_tls::HttpsConnector;
-
+use log::debug;
 use serde;
 use serde_json;
-
 use tokio;
 
 use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
-use bf;
-use bf::config::{Config, Environment};
-use bf::model::upload::MultipartUploadId;
-use bf::model::{
+use crate::bf::config::{Config, Environment};
+use crate::bf::model::upload::MultipartUploadId;
+use crate::bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
     TemporaryCredential, UploadId,
 };
-use bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{Error, ErrorKind, Future, Result, Stream};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
@@ -71,17 +68,6 @@ type RequestParam = (String, String);
 type Nothing = serde_json::Value;
 
 // =============================================================================
-
-// debug logging
-macro_rules! bf_debug {
-    ($msg:expr, $($var:ident = $value:expr),*) => {
-        if env::var("LOGLEVEL").unwrap_or_else(|_| String::from("info")).to_lowercase()
-            == "debug"
-        {
-            eprintln!("{}", format!($msg, $($var = $value),*));
-        }
-    }
-}
 
 // Useful builder macros:
 macro_rules! route {
@@ -201,7 +187,7 @@ impl Blackfynn {
         method: hyper::Method,
         params: I,
         payload: Option<&P>,
-    ) -> bf::Future<Q>
+    ) -> Future<Q>
     where
         P: serde::Serialize,
         I: IntoIterator<Item = RequestParam> + Send,
@@ -212,7 +198,7 @@ impl Blackfynn {
             .map(|p| {
                 serde_json::to_string(p)
                     .map(Into::into)
-                    .map_err(|e| bf::Error::with_chain(e, "bf:request:serde"))
+                    .map_err(Into::<Error>::into)
             })
             .unwrap_or_else(|| Ok(hyper::Body::empty()))
             .map_err(Into::into);
@@ -239,7 +225,7 @@ impl Blackfynn {
         params: I,
         body: hyper::Body,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
-    ) -> bf::Future<Q>
+    ) -> Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
         Q: 'static + Send + serde::de::DeserializeOwned,
@@ -265,8 +251,8 @@ impl Blackfynn {
         let uri = use_url
             .to_string()
             .parse::<hyper::Uri>()
-            .into_future()
-            .map_err(|e| bf::Error::with_chain(e, "bf:request:url"));
+            .map_err(Into::<Error>::into)
+            .into_future();
 
         let f = uri
             .and_then(move |uri| {
@@ -296,25 +282,14 @@ impl Blackfynn {
 
                 let reporting_url: String = uri.to_string();
                 let reporting_method: String = method.to_string();
-                let client_request_err: String = format!(
-                    "bf:request<{method}:{url}>:execute",
-                    method = reporting_method,
-                    url = reporting_url
-                );
 
                 // Make the actual request:
                 client
                     .request(req)
                     .map(|response| (reporting_url, reporting_method, response))
-                    .map_err(move |e| bf::Error::with_chain(e, client_request_err))
+                    .map_err(Into::into)
             })
             .and_then(move |(reporting_url, reporting_method, response)| {
-                let response_err: String = format!(
-                    "bf:request<{method}:{url}>:response",
-                    method = reporting_method,
-                    url = reporting_url
-                );
-
                 // Check the status code. And 5XX code will result in the
                 // future terminating with an error containing the message
                 // emitted from the API:
@@ -322,41 +297,28 @@ impl Blackfynn {
                 response
                     .into_body()
                     .concat2()
-                    .map_err(move |e| bf::Error::with_chain(e, response_err))
                     .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
+                    .map_err(Into::<Error>::into)
                     .and_then(
                         move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
                             if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(
-                                    bf::error::ErrorKind::ApiError(
-                                        status_code,
-                                        String::from_utf8_lossy(&body).to_string(),
-                                    )
-                                    .into(),
-                                );
+                                return future::err(Error::api_error(
+                                    status_code,
+                                    String::from_utf8_lossy(&body),
+                                ));
                             }
                             future::ok((reporting_url, reporting_method, body))
                         },
                     )
                     .and_then(move |(reporting_url, reporting_method, body)| {
-                        bf_debug!(
+                        debug!(
                             "bf:request<{method}:{url}>:serialize:payload = {payload}",
                             method = reporting_method,
                             url = reporting_url,
                             payload = Self::chunk_to_string(&body)
                         );
                         // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice(&body).map_err(move |e| {
-                            bf::Error::with_chain(
-                                e,
-                                format!(
-                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                    method = reporting_method.clone(),
-                                    url = url.clone(),
-                                    payload = Self::chunk_to_string(&body)
-                                ),
-                            )
-                        })
+                        serde_json::from_slice(&body).map_err(Into::into)
                     })
             });
 
@@ -397,7 +359,7 @@ impl Blackfynn {
         &self,
         api_key: S,
         api_secret: S,
-    ) -> bf::Future<response::ApiSession> {
+    ) -> Future<response::ApiSession> {
         let payload = request::ApiLogin::new(api_key.into(), api_secret.into());
         let this = self.clone();
         into_future_trait(
@@ -412,7 +374,7 @@ impl Blackfynn {
     }
 
     /// Get the current user.
-    pub fn get_user(&self) -> bf::Future<model::User> {
+    pub fn get_user(&self) -> Future<model::User> {
         get!(self, "/user/")
     }
 
@@ -420,7 +382,7 @@ impl Blackfynn {
     pub fn set_preferred_organization(
         &self,
         organization_id: Option<OrganizationId>,
-    ) -> bf::Future<model::User> {
+    ) -> Future<model::User> {
         let this = self.clone();
         let user = request::User::with_organization(organization_id);
         into_future_trait(put!(self, "/user/", params!(), &user).and_then(
@@ -432,30 +394,33 @@ impl Blackfynn {
     }
 
     /// List the organizations the user is a member of.
-    pub fn get_organizations(&self) -> bf::Future<response::Organizations> {
+    pub fn get_organizations(&self) -> Future<response::Organizations> {
         get!(self, "/organizations/")
     }
 
     /// Get a specific organization.
-    pub fn get_organization_by_id(&self, id: OrganizationId) -> bf::Future<response::Organization> {
+    pub fn get_organization_by_id(&self, id: OrganizationId) -> Future<response::Organization> {
         get!(self, route!("/organizations/{id}", id))
     }
 
     /// Get a listing of the datasets the current user has access to.
-    pub fn get_datasets(&self) -> bf::Future<Vec<response::Dataset>> {
+    pub fn get_datasets(&self) -> Future<Vec<response::Dataset>> {
         get!(self, "/datasets/")
     }
 
     /// Create a new dataset using full request object parameters.
-    pub fn create_dataset_with_request(
+    pub fn create_dataset_with_request<N: Into<String>, D: Into<String>>(
         &self,
-        payload: request::dataset::Create,
-    ) -> bf::Future<response::Dataset> {
+        name: N,
+        description: Option<D>,
+        automatically_process_packages: bool,
+    ) -> Future<response::Dataset> {
+        let paylaod = request::dataset::Create::new(name, description, automatically_process_packages);
         post!(
             self,
             "/datasets/",
             params!(),
-            payload!(payload)
+            payload!(paylaod)
         )
     }
 
@@ -464,19 +429,17 @@ impl Blackfynn {
         &self,
         name: N,
         description: Option<D>,
-    ) -> bf::Future<response::Dataset> {
-        self.create_dataset_with_request(
-            request::dataset::Create::new(name, description, false)
-        )
+    ) -> Future<response::Dataset> {
+        self.create_dataset_with_request(name, description, false)
     }
 
     /// Get a specific dataset by its ID.
-    pub fn get_dataset_by_id(&self, id: DatasetNodeId) -> bf::Future<response::Dataset> {
+    pub fn get_dataset_by_id(&self, id: DatasetNodeId) -> Future<response::Dataset> {
         get!(self, route!("/datasets/{id}", id))
     }
 
     /// Get a specific dataset by its name.
-    pub fn get_dataset_by_name<N: Into<String>>(&self, name: N) -> bf::Future<response::Dataset> {
+    pub fn get_dataset_by_name<N: Into<String>>(&self, name: N) -> Future<response::Dataset> {
         let name = name.into();
         let inner = self.clone();
         into_future_trait(self.get_datasets().and_then(move |datasets| {
@@ -486,7 +449,7 @@ impl Blackfynn {
                     let ds: &model::Dataset = ds.borrow();
                     ds.name().to_lowercase() == name.to_lowercase()
                 })
-                .ok_or_else(|| format!("couldn't find dataset \"{}\"", name).into())
+                .ok_or_else(|| Error::invalid_dataset_name(name))
                 .into_future()
                 .and_then(move |ds| {
                     // NOTE: We must re-request the found dataset, as any dataset
@@ -498,7 +461,7 @@ impl Blackfynn {
     }
 
     /// Get a dataset by ID or by name.
-    pub fn get_dataset<N: Into<String>>(&self, id_or_name: N) -> bf::Future<response::Dataset> {
+    pub fn get_dataset<N: Into<String>>(&self, id_or_name: N) -> Future<response::Dataset> {
         let id_or_name = id_or_name.into();
         let id = DatasetNodeId::from(id_or_name.clone());
         let name = id_or_name.clone();
@@ -518,10 +481,7 @@ impl Blackfynn {
     }
 
     /// Get the collaborators of the data set.
-    pub fn get_dataset_collaborators(
-        &self,
-        id: DatasetNodeId,
-    ) -> bf::Future<response::Collaborators> {
+    pub fn get_dataset_collaborators(&self, id: DatasetNodeId) -> Future<response::Collaborators> {
         get!(self, route!("/datasets/{id}/collaborators", id))
     }
 
@@ -531,7 +491,7 @@ impl Blackfynn {
         id: DatasetNodeId,
         name: N,
         description: Option<D>,
-    ) -> bf::Future<response::Dataset> {
+    ) -> Future<response::Dataset> {
         put!(
             self,
             route!("/datasets/{id}", id),
@@ -541,8 +501,8 @@ impl Blackfynn {
     }
 
     /// Delete an existing dataset.
-    pub fn delete_dataset(&self, id: DatasetNodeId) -> bf::Future<()> {
-        let f: bf::Future<response::EmptyMap> = delete!(self, route!("/datasets/{id}", id));
+    pub fn delete_dataset(&self, id: DatasetNodeId) -> Future<()> {
+        let f: Future<response::EmptyMap> = delete!(self, route!("/datasets/{id}", id));
         into_future_trait(f.map(|_| ()))
     }
 
@@ -552,7 +512,7 @@ impl Blackfynn {
         name: N,
         package_type: P,
         dataset: D,
-    ) -> bf::Future<response::Package>
+    ) -> Future<response::Package>
     where
         D: Into<DatasetNodeId>,
         N: Into<String>,
@@ -567,12 +527,12 @@ impl Blackfynn {
     }
 
     /// Get a specific package.
-    pub fn get_package_by_id(&self, id: PackageId) -> bf::Future<response::Package> {
+    pub fn get_package_by_id(&self, id: PackageId) -> Future<response::Package> {
         get!(self, route!("/packages/{id}", id))
     }
 
     /// Get the source files that are part of a package.
-    pub fn get_package_sources(&self, id: PackageId) -> bf::Future<response::Files> {
+    pub fn get_package_sources(&self, id: PackageId) -> Future<response::Files> {
         get!(self, route!("/packages/{id}/sources", id))
     }
 
@@ -581,7 +541,7 @@ impl Blackfynn {
         &self,
         id: PackageId,
         name: N,
-    ) -> bf::Future<response::Package> {
+    ) -> Future<response::Package> {
         put!(
             self,
             route!("/packages/{id}", id),
@@ -594,7 +554,7 @@ impl Blackfynn {
     pub fn process_package(
         &self,
         id: PackageId,
-    ) -> bf::Future<()> {
+    ) -> Future<()> {
         put!(
             self,
             route!("/packages/{id}/process", id)
@@ -602,32 +562,28 @@ impl Blackfynn {
     }
 
     /// Get the members that belong to the current users organization.
-    pub fn get_members(&self) -> bf::Future<Vec<model::User>> {
+    pub fn get_members(&self) -> Future<Vec<model::User>> {
         into_future_trait(match self.current_organization() {
             Some(org) => self.get_members_by_organization(org),
-            None => into_future_trait(future::err::<_, bf::Error>(
-                bf::error::ErrorKind::NoOrganizationSetError.into(),
-            )),
+            None => into_future_trait(future::err::<_, Error>(ErrorKind::NoOrganizationSet.into())),
         })
     }
 
     /// Get the members that belong to the specified organization.
-    pub fn get_members_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<model::User>> {
+    pub fn get_members_by_organization(&self, id: OrganizationId) -> Future<Vec<model::User>> {
         get!(self, route!("/organizations/{id}/members", id))
     }
 
     /// Get the members that belong to the current users organization.
-    pub fn get_teams(&self) -> bf::Future<Vec<response::Team>> {
+    pub fn get_teams(&self) -> Future<Vec<response::Team>> {
         into_future_trait(match self.current_organization() {
             Some(org) => self.get_teams_by_organization(org),
-            None => into_future_trait(future::err::<_, bf::Error>(
-                bf::error::ErrorKind::NoOrganizationSetError.into(),
-            )),
+            None => into_future_trait(future::err::<_, Error>(ErrorKind::NoOrganizationSet.into())),
         })
     }
 
     /// Get the teams that belong to the specified organization.
-    pub fn get_teams_by_organization(&self, id: OrganizationId) -> bf::Future<Vec<response::Team>> {
+    pub fn get_teams_by_organization(&self, id: OrganizationId) -> Future<Vec<response::Team>> {
         get!(self, route!("/organizations/{id}/teams", id))
     }
 
@@ -636,12 +592,12 @@ impl Blackfynn {
         since = "0.4.0",
         note = "please upload using the upload service instead"
     )]
-    pub fn grant_upload(&self, id: DatasetNodeId) -> bf::Future<response::UploadCredential> {
+    pub fn grant_upload(&self, id: DatasetNodeId) -> Future<response::UploadCredential> {
         get!(self, route!("/security/user/credentials/upload/{id}", id))
     }
 
     /// Grant temporary streaming access for the current user.
-    pub fn grant_streaming(&self) -> bf::Future<response::TemporaryCredential> {
+    pub fn grant_streaming(&self) -> Future<response::TemporaryCredential> {
         get!(self, "/security/user/credentials/streaming")
     }
 
@@ -655,15 +611,15 @@ impl Blackfynn {
         path: P,
         files: &[(UploadId, Q)],
         append: bool,
-    ) -> bf::Future<response::UploadPreview>
+    ) -> Future<response::UploadPreview>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let s3_files: bf::Result<Vec<model::S3File>> = files
+        let s3_files: Result<Vec<model::S3File>> = files
             .iter()
             .map(|(id, file)| FileUpload::new_non_recursive_upload(*id, path.as_ref().join(file)))
-            .collect::<bf::Result<Vec<_>>>()
+            .collect::<Result<Vec<_>>>()
             .and_then(|file_uploads| {
                 file_uploads
                     .iter()
@@ -690,7 +646,7 @@ impl Blackfynn {
         since = "0.4.0",
         note = "please upload using the upload service instead"
     )]
-    pub fn s3_uploader(&self, creds: TemporaryCredential) -> bf::Result<S3Uploader> {
+    pub fn s3_uploader(&self, creds: TemporaryCredential) -> Result<S3Uploader> {
         let (access_key, secret_key, session_token) = creds.take();
         S3Uploader::new(
             self.inner
@@ -717,7 +673,7 @@ impl Blackfynn {
         destination_id: Option<&PackageId>,
         append: bool,
         use_upload_service: bool,
-    ) -> bf::Future<response::Manifests> {
+    ) -> Future<response::Manifests> {
         let mut params = params!(
             "uploadService" => if use_upload_service { "true" } else { "false" },
             "append" => if append { "true" } else { "false" },
@@ -743,18 +699,20 @@ impl Blackfynn {
         files: &[(UploadId, Q)],
         append: bool,
         is_directory_upload: bool,
-    ) -> bf::Future<response::UploadPreview>
+    ) -> Future<response::UploadPreview>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
     {
-        let s3_files: bf::Result<Vec<model::S3File>> = files
+        let s3_files: Result<Vec<model::S3File>> = files
             .iter()
             .map(|(upload_id, file)| {
                 let path = path.as_ref();
                 if is_directory_upload {
                     path.ok_or_else(|| {
-                        "Path cannot be None when is_directory_upload is true".into()
+                        Error::invalid_arguments(
+                            "Path cannot be None when is_directory_upload is true",
+                        )
                     })
                     .and_then(|path| {
                         FileUpload::new_recursive_upload(*upload_id, path, file.as_ref())
@@ -765,7 +723,7 @@ impl Blackfynn {
                     FileUpload::new_non_recursive_upload(*upload_id, file)
                 }
             })
-            .collect::<bf::Result<Vec<_>>>()
+            .collect::<Result<Vec<_>>>()
             .and_then(|file_uploads| {
                 file_uploads
                     .iter()
@@ -806,7 +764,7 @@ impl Blackfynn {
         missing_parts: Option<response::FilesMissingParts>,
         progress_callback: C,
         parallelism: usize,
-    ) -> bf::Stream<ImportId>
+    ) -> Stream<ImportId>
     where
         P: 'static + AsRef<Path>,
         C: 'static + ProgressCallback + Clone,
@@ -819,7 +777,7 @@ impl Blackfynn {
             files
                 .into_iter()
                 .zip(iter::repeat(path.as_ref().to_path_buf()))
-                .map(|file| future::ok::<(model::S3File, PathBuf), bf::Error>(file.clone())),
+                .map(|file| future::ok::<(model::S3File, PathBuf), Error>(file.clone())),
         )
         .map(move |(file, path): (model::S3File, PathBuf)| {
             let mut file_path = path.clone();
@@ -838,7 +796,7 @@ impl Blackfynn {
 
             let chunked_file_payload =
                 if let Some(chunked_upload_properties) = file.chunked_upload() {
-                    bf_debug!(
+                    debug!(
                         "bf:upload_file_chunks<file = {file_name}> :: \
                          Chunk size received from the upload service: {chunk_size}.",
                         file_name = file.file_name(),
@@ -853,7 +811,7 @@ impl Blackfynn {
                         progress_callback.clone(),
                     )
                 } else {
-                    bf_debug!(
+                    debug!(
                         "bf:upload_file_chunks<file = {file_name}> :: \
                          No chunk size received from the upload service. \
                          Falling back to default.",
@@ -900,26 +858,20 @@ impl Blackfynn {
                                     if response.success {
                                         future::ok(import_id_clone)
                                     } else {
-                                        future::err(
-                                            bf::error::ErrorKind::UploadError(
-                                                response.error.unwrap_or_else(|| {
-                                                    String::from("No error message supplied.")
-                                                }),
-                                            )
-                                            .into(),
-                                        )
+                                        future::err(Error::upload_error(
+                                            response.error.unwrap_or_else(|| {
+                                                "no error message supplied".into()
+                                            }),
+                                        ))
                                     }
                                 },
                             ),
                         )
                     } else {
-                        into_future_trait(future::err(
-                            bf::error::ErrorKind::UploadError(format!(
-                                "No multipartId was provided for file: {}",
-                                file.file_name()
-                            ))
-                            .into(),
-                        ))
+                        into_future_trait(future::err(Error::upload_error(format!(
+                            "no multipartId was provided for file: {}",
+                            file.file_name()
+                        ))))
                     }
                 })
                 .map_err(Into::into)
@@ -938,7 +890,7 @@ impl Blackfynn {
         dataset_id: &DatasetNodeId,
         destination_id: Option<&PackageId>,
         append: bool,
-    ) -> bf::Future<response::Manifests> {
+    ) -> Future<response::Manifests> {
         let mut params = params!(
             "datasetId" => dataset_id,
             "append" => if append { "true" } else { "false" }
@@ -963,7 +915,7 @@ impl Blackfynn {
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
-    ) -> bf::Future<Option<response::FilesMissingParts>> {
+    ) -> Future<Option<response::FilesMissingParts>> {
         get!(
             self,
             route!(
@@ -982,7 +934,7 @@ impl Blackfynn {
         files: Vec<model::S3File>,
         progress_callback: C,
         parallelism: usize,
-    ) -> bf::Stream<ImportId>
+    ) -> Stream<ImportId>
     where
         P: 'static + AsRef<Path> + Send,
         C: 'static + ProgressCallback + Clone,
@@ -1057,17 +1009,15 @@ impl Blackfynn {
 
                         ld_err.failed = true;
 
-                        bf_debug!("Upload encountered an error: {error}", error = err);
-                        bf_debug!("Waiting {millis} millis to retry...", millis = delay);
+                        debug!("Upload encountered an error: {error}", error = err);
+                        debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
                         let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
                         let continue_loop = tokio::timer::Delay::new(deadline)
-                            .map_err(|e| {
-                                bf::Error::with_chain(e, "bf:upload_file_chunks_to_upload_service_retries :: Error during timeout")
-                            })
+                            .map_err(Into::into)
                             .map(move |_| {
-                                bf_debug!(
+                                debug!(
                                     "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
                                     try_num = ld_err.try_num, retries = max_retries
                                 );
@@ -1075,7 +1025,7 @@ impl Blackfynn {
                             });
                         into_future_trait(continue_loop)
                     } else {
-                        into_future_trait(future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, bf::Error>(
+                        into_future_trait(future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, Error>(
                             future::Loop::Break(ld_err),
                         ))
                     }
@@ -1083,7 +1033,7 @@ impl Blackfynn {
         })
         .map(|ld| {
             match ld.result {
-                Some(import_ids) => future::ok::<bf::Stream<ImportId>, bf::Error>(
+                Some(import_ids) => future::ok::<Stream<ImportId>, Error>(
                     into_stream_trait(stream::futures_unordered(
                         import_ids
                             .iter()
@@ -1091,7 +1041,7 @@ impl Blackfynn {
                     )),
                 )
                 .into_stream(),
-                None => future::err("Retries exceeded".into()).into_stream(),
+                None => future::err(ErrorKind::RetriesExceeded.into()).into_stream(),
             }
             .flatten()
         })
@@ -1107,39 +1057,38 @@ pub mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::fmt::Debug;
-    use std::{cell, fs, path, sync, thread, time};
+    use std::{cell, fs, path, result, sync, thread, time};
 
-    use bf::api::client::s3::MultipartUploadResult;
+    use lazy_static::lazy_static;
+
+    use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
-    use bf::config::Environment;
-    use bf::util::futures::into_future_trait;
-    use bf::util::rand_suffix;
-
-    use error_chain::ChainedError;
+    use crate::bf::config::Environment;
+    use crate::bf::util::futures::into_future_trait;
+    use crate::bf::util::rand_suffix;
 
     const TEST_ENVIRONMENT: Environment = Environment::Development;
-    const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
-    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_SECRET_KEY");
+    const TEST_API_KEY: &str = env!("BLACKFYNN_API_KEY");
+    const TEST_SECRET_KEY: &str = env!("BLACKFYNN_SECRET_KEY");
 
     // "Blackfynn"
-    const FIXTURE_ORGANIZATION: &'static str =
-        "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
+    const FIXTURE_ORGANIZATION: &str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
 
     // Dedicated agent email (dev)
     #[allow(dead_code)]
-    const FIXTURE_EMAIL: &'static str = "agent-test@blackfynn.com";
+    const FIXTURE_EMAIL: &str = "agent-test@blackfynn.com";
 
     // Dedicated agent user (dev)
     #[allow(dead_code)]
-    const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
+    const FIXTURE_USER: &str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
-    const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
+    const FIXTURE_DATASET: &str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
+    const FIXTURE_DATASET_NAME: &str = "AGENT-DATASET-DO-NOT-DELETE";
 
     // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
-    const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
+    const FIXTURE_PACKAGE: &str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
+    const FIXTURE_PACKAGE_NAME: &str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
@@ -1153,9 +1102,9 @@ pub mod tests {
 
     /// given a 'runner' function, run the given Blackfynn instance
     /// through that function and block until completion
-    fn run<F, T>(bf: &Blackfynn, runner: F) -> bf::Result<T>
+    fn run<F, T>(bf: &Blackfynn, runner: F) -> Result<T>
     where
-        F: Fn(Blackfynn) -> bf::Future<T>,
+        F: Fn(Blackfynn) -> Future<T>,
         T: 'static + Send,
     {
         let mut rt = tokio::runtime::Runtime::new()?;
@@ -1213,7 +1162,7 @@ pub mod tests {
         match fs::read_dir(test_data_dir(data_dir)) {
             Ok(entries) => entries
                 .map(|entry| entry.unwrap().file_name().into_string())
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<result::Result<Vec<_>, _>>()
                 .unwrap(),
             Err(e) => {
                 eprintln!("{:?} :: {:?}", data_dir, e);
@@ -1258,7 +1207,7 @@ pub mod tests {
         });
 
         if org.is_err() {
-            panic!("{}", org.unwrap_err().display_chain().to_string());
+            panic!("{}", org.unwrap_err().to_string());
         }
     }
 
@@ -1272,7 +1221,7 @@ pub mod tests {
         });
 
         if user.is_err() {
-            panic!("{}", user.unwrap_err().display_chain().to_string());
+            panic!("{}", user.unwrap_err().to_string());
         }
     }
 
@@ -1291,7 +1240,7 @@ pub mod tests {
         });
 
         if user.is_err() {
-            panic!("{}", user.unwrap_err().display_chain().to_string());
+            panic!("{}", user.unwrap_err().to_string());
         }
     }
 
@@ -1316,7 +1265,7 @@ pub mod tests {
         });
 
         if org.is_err() {
-            panic!("{}", org.unwrap_err().display_chain().to_string());
+            panic!("{}", org.unwrap_err().to_string());
         }
     }
 
@@ -1330,7 +1279,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
     }
 
@@ -1350,7 +1299,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
     }
 
@@ -1364,7 +1313,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
     }
 
@@ -1378,7 +1327,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
     }
 
@@ -1392,7 +1341,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
     }
 
@@ -1406,7 +1355,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
 
         assert!(ds
@@ -1425,7 +1374,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
 
         assert!(ds
@@ -1444,7 +1393,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
 
         assert!(ds
@@ -1463,7 +1412,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
 
         assert!(ds
@@ -1482,7 +1431,7 @@ pub mod tests {
         });
 
         if ds.is_err() {
-            panic!("{}", ds.unwrap_err().display_chain().to_string());
+            panic!("{}", ds.unwrap_err().to_string());
         }
 
         assert!(ds.unwrap().get_package_by_name("doesnotexist").is_none());
@@ -1509,7 +1458,7 @@ pub mod tests {
             )
         });
         if package.is_err() {
-            panic!("{}", package.unwrap_err().display_chain().to_string());
+            panic!("{}", package.unwrap_err().to_string());
         }
     }
 
@@ -1523,11 +1472,9 @@ pub mod tests {
         });
 
         if let Err(e) = package {
-            match e {
+            match e.kind() {
                 // blackfynn api returns 403 in this case..it should really be 404 I think
-                bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
-                    assert_eq!(status.as_u16(), 404)
-                }
+                ErrorKind::ApiError { status_code, .. } => assert_eq!(status_code.as_u16(), 404),
                 _ => assert!(false),
             }
         }
@@ -1617,7 +1564,7 @@ pub mod tests {
         });
 
         if result.is_err() {
-            panic!("{}", result.unwrap_err().display_chain().to_string());
+            panic!("{}", result.unwrap_err().to_string());
         }
     }
 
@@ -1654,7 +1601,7 @@ pub mod tests {
         });
 
         if result.is_err() {
-            panic!("{}", result.unwrap_err().display_chain().to_string());
+            panic!("{}", result.unwrap_err().to_string());
         }
     }
 
@@ -1668,9 +1615,9 @@ pub mod tests {
         });
 
         if let Err(e) = resp {
-            match e {
-                bf::error::Error(bf::error::ErrorKind::ApiError(status, _), _) => {
-                    assert_eq!(status.as_u16(), 400)
+            match e.kind() {
+                ErrorKind::ApiError{ status_code, .. } => {
+                    assert_eq!(status_code.as_u16(), 400)
                 }
                 _ => assert!(false),
             }
@@ -1686,7 +1633,7 @@ pub mod tests {
             )
         });
         if cred.is_err() {
-            panic!("{}", cred.unwrap_err().display_chain().to_string());
+            panic!("{}", cred.unwrap_err().to_string());
         }
     }
 
@@ -1700,7 +1647,7 @@ pub mod tests {
                 }))
             });
         if preview.is_err() {
-            panic!("{}", preview.unwrap_err().display_chain().to_string());
+            panic!("{}", preview.unwrap_err().to_string());
         }
     }
 
@@ -1714,7 +1661,7 @@ pub mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn) -> bf::Future<(UploadScaffold, Blackfynn)>> {
+    ) -> Box<dyn Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = add_upload_ids(&test_files);
@@ -1806,74 +1753,73 @@ pub mod tests {
         });
 
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }
 
     #[test]
     fn multipart_file_uploading() {
-        let result = run(&bf(), move |bf| {
-            let bf_clone = bf.clone();
-            let f =
-                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
-                    .and_then(move |(scaffold, bf)| {
-                        let dataset_id = scaffold.dataset_id.clone();
-                        let dataset_id_inner = scaffold.dataset_id.clone();
-                        let cred = scaffold.upload_credential.clone();
-                        let uploader = bf
-                            .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
-                            .unwrap();
-                        stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
-                            move |package| {
-                                uploader.multipart_upload_files(
-                                    &*TEST_DATA_DIR,
-                                    package.files(),
-                                    package.import_id().clone(),
-                                    cred.clone().into(),
-                                )
-                            },
-                        ))
-                        .flatten()
-                        .filter_map(move |result| match result {
-                            MultipartUploadResult::Complete(import_id, _) => {
-                                Some(bf.complete_upload(
-                                    &import_id,
-                                    &dataset_id.clone(),
-                                    None,
-                                    false,
-                                    false,
-                                ))
-                            }
-                            _ => None,
-                        })
+        let result =
+            run(&bf(), move |bf| {
+                let bf_clone = bf.clone();
+                let f = create_upload_scaffold(
+                    (*TEST_DATA_DIR).to_string(),
+                    (&*TEST_FILES).to_vec(),
+                )(bf)
+                .and_then(move |(scaffold, bf)| {
+                    let dataset_id = scaffold.dataset_id.clone();
+                    let dataset_id_inner = scaffold.dataset_id.clone();
+                    let cred = scaffold.upload_credential.clone();
+                    let uploader = bf
+                        .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
+                        .unwrap();
+                    stream::iter_ok::<_, Error>(scaffold.preview.into_iter().map(move |package| {
+                        uploader.multipart_upload_files(
+                            &*TEST_DATA_DIR,
+                            package.files(),
+                            package.import_id().clone(),
+                            cred.clone().into(),
+                        )
+                    }))
+                    .flatten()
+                    .filter_map(move |result| match result {
+                        MultipartUploadResult::Complete(import_id, _) => Some(bf.complete_upload(
+                            &import_id,
+                            &dataset_id.clone(),
+                            None,
+                            false,
+                            false,
+                        )),
+                        _ => None,
+                    })
+                    .collect()
+                    .map(|fs| (fs, dataset_id_inner))
+                })
+                .and_then(|(fs, dataset_id)| {
+                    stream::futures_unordered(fs)
                         .collect()
-                        .map(|fs| (fs, dataset_id_inner))
-                    })
-                    .and_then(|(fs, dataset_id)| {
-                        stream::futures_unordered(fs)
-                            .collect()
-                            .map(|manifests| (dataset_id, manifests))
-                    })
-                    .and_then(|(dataset_id, manifests)| {
-                        let mut file_count = 0;
-                        for manifest in manifests {
-                            for entry in manifest.entries() {
-                                let n = entry.files().len();
-                                assert!(n > 0);
-                                file_count += n;
-                            }
+                        .map(|manifests| (dataset_id, manifests))
+                })
+                .and_then(|(dataset_id, manifests)| {
+                    let mut file_count = 0;
+                    for manifest in manifests {
+                        for entry in manifest.entries() {
+                            let n = entry.files().len();
+                            assert!(n > 0);
+                            file_count += n;
                         }
-                        assert_eq!(file_count, TEST_FILES.len());
-                        Ok(dataset_id)
-                    })
-                    .and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
+                    }
+                    assert_eq!(file_count, TEST_FILES.len());
+                    Ok(dataset_id)
+                })
+                .and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
 
-            into_future_trait(f)
-        });
+                into_future_trait(f)
+            });
 
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }
@@ -1922,18 +1868,16 @@ pub mod tests {
                     });
                 }
 
-                stream::iter_ok::<_, bf::error::Error>(scaffold.preview.into_iter().map(
-                    move |package| {
-                        let cb = cb.clone();
-                        uploader.multipart_upload_files_cb(
-                            &*BIG_TEST_DATA_DIR,
-                            package.files(),
-                            package.import_id().clone(),
-                            cred.clone().into(),
-                            cb,
-                        )
-                    },
-                ))
+                stream::iter_ok::<_, Error>(scaffold.preview.into_iter().map(move |package| {
+                    let cb = cb.clone();
+                    uploader.multipart_upload_files_cb(
+                        &*BIG_TEST_DATA_DIR,
+                        package.files(),
+                        package.import_id().clone(),
+                        cred.clone().into(),
+                        cb,
+                    )
+                }))
                 .flatten()
                 .map(move |result| {
                     match result {
@@ -1982,9 +1926,94 @@ pub mod tests {
         });
 
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
+    }
+
+    fn upload_to_upload_service(files: Vec<(UploadId, String)>) -> Result<()> {
+        run(&bf(), move |bf| {
+            let files = files.clone();
+            let f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| {
+                    bf.create_dataset(
+                        rand_suffix("$agent-test-dataset".to_string()),
+                        Some("A test dataset created by the agent".to_string()),
+                    )
+                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
+                })
+                .and_then(|(bf, dataset_id, dataset_int_id)| {
+                    bf.get_user().map(|user| {
+                        (
+                            bf,
+                            dataset_id,
+                            user.preferred_organization().unwrap().clone(),
+                            dataset_int_id,
+                        )
+                    })
+                })
+                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                    bf.preview_upload_using_upload_service(
+                        &organization_id.clone(),
+                        &dataset_int_id,
+                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                        &files,
+                        false,
+                        false,
+                    )
+                    .map(|preview| (bf, dataset_id, organization_id, preview))
+                })
+                .and_then(move |(bf, dataset_id, organization_id, preview)| {
+                    let bf = bf.clone();
+                    let bf_clone = bf.clone();
+                    let dataset_id = dataset_id.clone();
+                    let dataset_id_clone = dataset_id.clone();
+
+                    let upload_futures = preview.into_iter().map(move |package| {
+                        let import_id = package.import_id().clone();
+                        let bf = bf.clone();
+                        let bf_clone = bf.clone();
+                        let organization_id = organization_id.clone();
+
+                        let dataset_id = dataset_id.clone();
+                        let package = package.clone();
+
+                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
+                            .to_path_buf()
+                            .canonicalize()
+                            .unwrap();
+
+                        let progress_indicator = ProgressIndicator::new();
+
+                        // upload using the retries function
+                        bf.upload_file_chunks_to_upload_service_retries(
+                            &organization_id,
+                            &import_id,
+                            &file_path,
+                            package.files().to_vec(),
+                            progress_indicator.clone(),
+                            1,
+                        )
+                        .collect()
+                        .map(|_| (bf_clone, dataset_id))
+                        .and_then(move |(bf, dataset_id)| {
+                            bf.complete_upload_using_upload_service(
+                                &organization_id,
+                                &import_id,
+                                &dataset_id,
+                                None,
+                                false,
+                            )
+                        })
+                    });
+
+                    futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+                })
+                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+
+            into_future_trait(f)
+        })
     }
 
     #[test]
@@ -2078,7 +2107,7 @@ pub mod tests {
 
         // check result
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }
@@ -2205,100 +2234,20 @@ pub mod tests {
 
         // check result
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }
 
     #[test]
     fn upload_to_upload_service_with_retries() {
+        let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
         // create upload
-        let result = run(&bf(), move |bf| {
-            let f = bf
-                .login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.create_dataset(
-                        rand_suffix("$agent-test-dataset".to_string()),
-                        Some("A test dataset created by the agent".to_string()),
-                    )
-                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
-                })
-                .and_then(|(bf, dataset_id, dataset_int_id)| {
-                    bf.get_user().map(|user| {
-                        (
-                            bf,
-                            dataset_id,
-                            user.preferred_organization().unwrap().clone(),
-                            dataset_int_id,
-                        )
-                    })
-                })
-                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
-                    let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
-                    bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
-                        &dataset_int_id,
-                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
-                        &enumerated_files,
-                        false,
-                        false,
-                    )
-                    .map(|preview| (bf, dataset_id, organization_id, preview))
-                })
-                .and_then(move |(bf, dataset_id, organization_id, preview)| {
-                    let bf = bf.clone();
-                    let bf_clone = bf.clone();
-                    let dataset_id = dataset_id.clone();
-                    let dataset_id_clone = dataset_id.clone();
-
-                    let upload_futures = preview.into_iter().map(move |package| {
-                        let import_id = package.import_id().clone();
-                        let bf = bf.clone();
-                        let bf_clone = bf.clone();
-                        let organization_id = organization_id.clone();
-
-                        let dataset_id = dataset_id.clone();
-                        let package = package.clone();
-
-                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
-                            .to_path_buf()
-                            .canonicalize()
-                            .unwrap();
-
-                        let progress_indicator = ProgressIndicator::new();
-
-                        // upload using the retries function
-                        bf.upload_file_chunks_to_upload_service_retries(
-                            &organization_id,
-                            &import_id,
-                            &file_path,
-                            package.files().to_vec(),
-                            progress_indicator.clone(),
-                            1,
-                        )
-                        .collect()
-                        .map(|_| (bf_clone, dataset_id))
-                        .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
-                                &organization_id,
-                                &import_id,
-                                &dataset_id,
-                                None,
-                                false,
-                            )
-                        })
-                    });
-
-                    futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
-                })
-                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
-
-            into_future_trait(f)
-        });
+        let result = upload_to_upload_service(enumerated_files);
 
         // check result
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }
@@ -2397,7 +2346,7 @@ pub mod tests {
 
         // check result
         if result.is_err() {
-            println!("{}", result.unwrap_err().display_chain().to_string());
+            println!("{}", result.unwrap_err().to_string());
             panic!();
         }
     }

@@ -2,6 +2,8 @@
 
 use std::borrow::Borrow;
 
+use serde_derive::{Deserialize, Serialize};
+
 /// A Blackfynn platform session token.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct SessionToken(String);

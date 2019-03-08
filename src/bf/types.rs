@@ -4,9 +4,9 @@
 
 use futures;
 
-use bf::error;
+use crate::bf::error;
 
-pub use bf::error::{Error, ErrorKind, Result, ResultExt};
+pub use crate::bf::error::{Error, ErrorKind, Result};
 
 /// A `futures::future::Future` type parameterized by `bf::error::Error`
 #[allow(dead_code)]

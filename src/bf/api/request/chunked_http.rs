@@ -7,10 +7,10 @@ use futures::Async::Ready;
 use sha2::{Digest, Sha256};
 use tokio::prelude::{Async, Stream};
 
-use bf::api::client::progress::{ProgressCallback, ProgressUpdate};
-use bf::api::response::FileMissingParts;
-use bf::model::upload::Checksum;
-use bf::model::ImportId;
+use crate::bf::api::client::progress::{ProgressCallback, ProgressUpdate};
+use crate::bf::api::response::FileMissingParts;
+use crate::bf::model::upload::Checksum;
+use crate::bf::model::ImportId;
 
 // 5MiB (the minimum part size for s3 multipart requests)
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 5_242_880;
@@ -165,7 +165,7 @@ impl Stream for ChunkedFilePayload {
             // if expected_total_parts is not defined, the upload
             // service has not given any information about this
             // upload.  by default, assume all chunks are required.
-            let mut seek_from_chunk_number = match self.expected_total_parts {
+            let seek_from_chunk_number = match self.expected_total_parts {
                 None => self.parts_sent,
                 Some(expected_total_parts) => {
                     if self.missing_parts.is_empty() {
@@ -217,7 +217,7 @@ mod tests {
     use std::path;
 
     use super::*;
-    use bf::api::client;
+    use crate::bf::api::client;
 
     use futures::Future;
 

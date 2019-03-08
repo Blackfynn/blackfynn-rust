@@ -3,7 +3,9 @@
 use std::slice;
 use std::vec;
 
-use bf::model;
+use serde_derive::Deserialize;
+
+use crate::bf::model;
 
 /// A response wrapping a `model::Organization`, along with related metadata.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Deserialize)]
@@ -67,7 +69,7 @@ impl Organizations {
         self.len() == 0
     }
 
-    pub fn iter(&self) -> slice::Iter<Organization> {
+    pub fn iter(&self) -> slice::Iter<'_, Organization> {
         self.organizations.iter()
     }
 }

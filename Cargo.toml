@@ -1,18 +1,21 @@
 [package]
 name = "blackfynn"
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Blackfynn <https://github.com/Blackfynn/blackfynn-rust>"]
 publish = false
+edition = "2018"
 
 [dependencies]
 chrono = { version = "^0.4", features = ["serde"] }
 sha2 = "^0.8"
-error-chain = "^0.12"
+failure = "^0.1"
+failure_derive = "^0.1"
 futures = "^0.1"
 hyper = "^0.12"
 hyper-tls = "^0.3"
 itertools = "^0.7"
 lazy_static = "^1.1"
+log = "^0.4"
 rand = "^0.5"
 rusoto_core = "^0.33"
 rusoto_credential = "^0.12"

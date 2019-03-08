@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::Serialize;
 
-use bf::model::{DatasetNodeId, Property};
+use crate::bf::model::{DatasetNodeId, Property};
 
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

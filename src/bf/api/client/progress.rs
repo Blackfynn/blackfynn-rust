@@ -3,14 +3,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bf::model::ImportId;
+use crate::bf::model::ImportId;
 
 /// A trait defining a progress indicator callback. Every time a file part
 /// successfully completes, `update` will be called with new, update statistics
 /// for the file.
 pub trait ProgressCallback: Send + Sync {
     /// Called when an uploaded progress update occurs.
-    fn on_update(&self, &ProgressUpdate);
+    fn on_update(&self, _: &ProgressUpdate);
 }
 
 /// An implementation of `ProgressCallback` that does nothing.
@@ -92,10 +92,12 @@ impl ProgressUpdate {
 
     /// Returns the upload percentage completed.
     pub fn percent_done(&self) -> f32 {
-        let bytes_sent = self.bytes_sent();
-        let size = self.bytes_sent();
 
-        if size == 0 {
+        // when uploading an empty (0 byte) file, we send up a single
+        // part with no data. Since we can't rely on `bytes_sent` to
+        // track progress on an empty file, we instead look at the
+        // part number.
+        if self.size == 0 {
             if self.part_number == 0 {
                 return 0.0;
             } else {
@@ -103,7 +105,7 @@ impl ProgressUpdate {
             }
         }
 
-        (bytes_sent as f32 / size as f32) * 100.0
+        (self.bytes_sent as f32 / self.size as f32) * 100.0
     }
 
     /// Tests if the file completed uploading.

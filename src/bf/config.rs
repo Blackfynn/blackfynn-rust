@@ -8,8 +8,8 @@ use std::str::FromStr;
 
 use url::Url;
 
-use bf::error::{Error, ErrorKind};
-use bf::model::S3ServerSideEncryption;
+use crate::bf::error::Error;
+use crate::bf::model::S3ServerSideEncryption;
 
 /// Defines the server environment the library is interacting with.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -40,7 +40,7 @@ impl Environment {
 }
 
 impl fmt::Display for Environment {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let printable = match *self {
             Environment::Local => "local",
             Environment::Development => "development",
@@ -59,7 +59,7 @@ impl FromStr for Environment {
             "dev" | "development" => Ok(Environment::Development),
             "prod" | "production" => Ok(Environment::Production),
             "local" => Ok(Environment::Local),
-            _ => Err(ErrorKind::EnvParseError(s.to_string()).into()),
+            _ => Err(Error::env_parse_error(s)),
         }
     }
 }

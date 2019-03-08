@@ -3,9 +3,11 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use bf::api::response::package::Package;
-use bf::api::BFChildren;
-use bf::model;
+use serde_derive::Deserialize;
+
+use crate::bf::api::response::package::Package;
+use crate::bf::api::BFChildren;
+use crate::bf::model;
 
 /// A response wrapping a `model::Dataset`, along with and related metadata.
 #[derive(Debug, Clone, PartialEq, Deserialize)]

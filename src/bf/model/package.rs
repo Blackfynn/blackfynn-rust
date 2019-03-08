@@ -5,9 +5,10 @@ use std::fmt;
 use std::ops::Deref;
 
 use chrono::{DateTime, Utc};
+use serde_derive::{Deserialize, Serialize};
 
-use bf::api::{BFId, BFName};
-use bf::model;
+use crate::bf::api::{BFId, BFName};
+use crate::bf::model;
 
 /// An identifier for a package on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -69,7 +70,7 @@ impl<'a> From<&'a str> for PackageId {
 }
 
 impl fmt::Display for PackageId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }

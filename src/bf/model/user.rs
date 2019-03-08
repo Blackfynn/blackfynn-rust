@@ -2,8 +2,10 @@
 
 use std::borrow::Borrow;
 
-use bf::api::BFId;
-use bf::model;
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::api::BFId;
+use crate::bf::model;
 
 /// An identifier for a user on the Blackfynn platform.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
