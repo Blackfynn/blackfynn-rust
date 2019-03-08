@@ -3,7 +3,9 @@
 use std::slice;
 use std::vec;
 
-use bf::model;
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::model;
 
 /// A file upload preview response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,7 +32,7 @@ impl UploadPreview {
         self.packages.iter().map(|p| p.file_count()).sum()
     }
 
-    pub fn iter(&self) -> slice::Iter<model::PackagePreview> {
+    pub fn iter(&self) -> slice::Iter<'_, model::PackagePreview> {
         self.packages.iter()
     }
 }
@@ -72,7 +74,7 @@ impl Manifests {
         &self.0
     }
 
-    pub fn iter(&self) -> slice::Iter<model::ManifestEntry> {
+    pub fn iter(&self) -> slice::Iter<'_, model::ManifestEntry> {
         self.0.iter()
     }
 }

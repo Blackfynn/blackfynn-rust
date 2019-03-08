@@ -12,6 +12,8 @@ mod security;
 mod team;
 mod upload;
 
+use serde_derive::Deserialize;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmptyMap {}

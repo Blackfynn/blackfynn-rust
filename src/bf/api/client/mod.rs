@@ -13,27 +13,25 @@ use std::sync::{Arc, Mutex};
 use std::{iter, time};
 
 use futures::{Future as _Future, Stream as _Stream, *};
-
 use hyper;
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper_tls::HttpsConnector;
-
+use log::debug;
 use serde;
 use serde_json;
-
 use tokio;
 
 use super::request::chunked_http::ChunkedFilePayload;
 use super::{request, response};
-use bf::config::{Config, Environment};
-use bf::model::upload::MultipartUploadId;
-use bf::model::{
+use crate::bf::config::{Config, Environment};
+use crate::bf::model::upload::MultipartUploadId;
+use crate::bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
     TemporaryCredential, UploadId,
 };
-use bf::util::futures::{into_future_trait, into_stream_trait};
-use bf::{Error, ErrorKind, Future, Result, Stream};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{Error, ErrorKind, Future, Result, Stream};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
@@ -1039,35 +1037,36 @@ pub mod tests {
     use std::fmt::Debug;
     use std::{cell, fs, path, result, sync, thread, time};
 
-    use bf::api::client::s3::MultipartUploadResult;
+    use lazy_static::lazy_static;
+
+    use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
-    use bf::config::Environment;
-    use bf::util::futures::into_future_trait;
-    use bf::util::rand_suffix;
+    use crate::bf::config::Environment;
+    use crate::bf::util::futures::into_future_trait;
+    use crate::bf::util::rand_suffix;
 
     const TEST_ENVIRONMENT: Environment = Environment::Development;
-    const TEST_API_KEY: &'static str = env!("BLACKFYNN_API_KEY");
-    const TEST_SECRET_KEY: &'static str = env!("BLACKFYNN_SECRET_KEY");
+    const TEST_API_KEY: &str = env!("BLACKFYNN_API_KEY");
+    const TEST_SECRET_KEY: &str = env!("BLACKFYNN_SECRET_KEY");
 
     // "Blackfynn"
-    const FIXTURE_ORGANIZATION: &'static str =
-        "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
+    const FIXTURE_ORGANIZATION: &str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
 
     // Dedicated agent email (dev)
     #[allow(dead_code)]
-    const FIXTURE_EMAIL: &'static str = "agent-test@blackfynn.com";
+    const FIXTURE_EMAIL: &str = "agent-test@blackfynn.com";
 
     // Dedicated agent user (dev)
     #[allow(dead_code)]
-    const FIXTURE_USER: &'static str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
+    const FIXTURE_USER: &str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
     // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &'static str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
-    const FIXTURE_DATASET_NAME: &'static str = "AGENT-DATASET-DO-NOT-DELETE";
+    const FIXTURE_DATASET: &str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
+    const FIXTURE_DATASET_NAME: &str = "AGENT-DATASET-DO-NOT-DELETE";
 
     // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &'static str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
-    const FIXTURE_PACKAGE_NAME: &'static str = "AGENT-TEST-PACKAGE";
+    const FIXTURE_PACKAGE: &str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
+    const FIXTURE_PACKAGE_NAME: &str = "AGENT-TEST-PACKAGE";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
@@ -1621,7 +1620,7 @@ pub mod tests {
     fn create_upload_scaffold(
         test_path: String,
         test_files: Vec<String>,
-    ) -> Box<Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
+    ) -> Box<dyn Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
         Box::new(move |bf| {
             let test_path = test_path.clone();
             let test_files = add_upload_ids(&test_files);

@@ -10,17 +10,16 @@ use std::sync::{Arc, Mutex};
 use std::{iter, result};
 
 use futures::{Future as _Future, Stream as _Stream, *};
-
 use rusoto_core::request::HttpClient;
 use rusoto_credential::StaticProvider;
 use rusoto_s3::{self, S3Client, S3};
 
-use bf::model::{
+use crate::bf::model::{
     AccessKey, ImportId, S3Bucket, S3File, S3Key, S3ServerSideEncryption, S3UploadId, SecretKey,
     SessionToken, UploadCredential,
 };
-use bf::util::futures::{into_future_trait, into_stream_trait};
-use bf::{model, Error, ErrorKind, Future, Result, Stream};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{model, Error, ErrorKind, Future, Result, Stream};
 
 use super::progress::{NoProgress, ProgressCallback, ProgressUpdate};
 
@@ -387,7 +386,7 @@ impl UploadProgress {
     }
 
     /// Returns an iterator over file upload progress updates.
-    pub fn iter(&mut self) -> UploadProgressIter {
+    pub fn iter(&mut self) -> UploadProgressIter<'_> {
         self.update();
         UploadProgressIter {
             iter: self.file_stats.iter(),

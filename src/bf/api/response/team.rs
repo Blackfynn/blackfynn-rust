@@ -1,6 +1,7 @@
 // Copyright (c) 2018 Blackfynn, Inc. All Rights Reserved.
+use serde_derive::Deserialize;
 
-use bf::model;
+use crate::bf::model;
 
 /// A response wrapping a `model::Team`, along with additional metadata.
 #[derive(Debug, Clone, PartialEq, Deserialize)]

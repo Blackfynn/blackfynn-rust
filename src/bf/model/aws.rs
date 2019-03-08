@@ -3,7 +3,9 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-use bf::model;
+use serde_derive::{Deserialize, Serialize};
+
+use crate::bf::model;
 
 /// An AWS S3 access key.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -268,11 +270,11 @@ pub enum S3ServerSideEncryption {
 
 impl From<S3ServerSideEncryption> for String {
     fn from(encryption_type: S3ServerSideEncryption) -> Self {
-        String::from(Into::<&'static str>::into(encryption_type))
+        String::from(Into::<&str>::into(encryption_type))
     }
 }
 
-impl From<S3ServerSideEncryption> for &'static str {
+impl From<S3ServerSideEncryption> for &str {
     fn from(encryption_type: S3ServerSideEncryption) -> Self {
         match encryption_type {
             S3ServerSideEncryption::KMS => "aws:kms",

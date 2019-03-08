@@ -10,6 +10,6 @@ pub mod types;
 mod util;
 
 // Re-export
-pub use bf::api::Blackfynn;
-pub use bf::config::{Config, Environment};
-pub use bf::types::{Error, ErrorKind, Future, Result, Stream};
+pub use crate::bf::api::Blackfynn;
+pub use crate::bf::config::{Config, Environment};
+pub use crate::bf::types::{Error, ErrorKind, Future, Result, Stream};

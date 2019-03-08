@@ -2,7 +2,9 @@
 
 use std::borrow::Borrow;
 
-use bf::model;
+use serde_derive::Deserialize;
+
+use crate::bf::model;
 
 /// A response wrapping a timeseries `model::Channel`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]

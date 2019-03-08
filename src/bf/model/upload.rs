@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::{cmp, fmt, fs, result};
 
 use futures::*;
+use serde_derive::{Deserialize, Serialize};
 
-use bf::util::futures::{into_future_trait, into_stream_trait};
-use bf::{model, Error, Future, Result, Stream};
+use crate::bf::util::futures::{into_future_trait, into_stream_trait};
+use crate::bf::{model, Error, Future, Result, Stream};
 
 /// An identifier returned by the Blackfynn platform used to group
 /// a collection of files together for uploading.
@@ -64,7 +65,7 @@ impl<'a> From<&'a str> for ImportId {
 }
 
 impl fmt::Display for ImportId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
