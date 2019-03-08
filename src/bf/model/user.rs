@@ -70,6 +70,7 @@ pub struct User {
     last_name: String,
     email: String,
     preferred_organization: Option<model::OrganizationId>,
+    role: Option<String>,
 }
 
 impl BFId for User {
@@ -98,5 +99,9 @@ impl User {
 
     pub fn preferred_organization(&self) -> Option<&model::OrganizationId> {
         self.preferred_organization.as_ref()
+    }
+
+    pub fn role(&self) -> Option<&String> {
+        self.role.as_ref()
     }
 }
