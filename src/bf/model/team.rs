@@ -68,6 +68,7 @@ impl From<String> for TeamId {
 pub struct Team {
     id: TeamId,
     name: String,
+    role: Option<String>,
 }
 
 impl Team {
@@ -77,6 +78,10 @@ impl Team {
 
     pub fn name(&self) -> &String {
         &self.name
+    }
+
+    pub fn role(&self) -> Option<&String> {
+        self.role.as_ref()
     }
 }
 

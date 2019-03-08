@@ -23,7 +23,7 @@ pub use self::account::ApiSession;
 pub use self::channel::Channel;
 pub use self::dataset::{ChangeResponse, CollaboratorCounts, Collaborators, Dataset};
 pub use self::file::{File, Files};
-pub use self::organization::{Organization, Organizations};
+pub use self::organization::{Organization, OrganizationRole, Organizations};
 pub use self::package::Package;
 pub use self::security::{TemporaryCredential, UploadCredential};
 pub use self::team::Team;

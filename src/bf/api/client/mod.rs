@@ -469,9 +469,25 @@ impl Blackfynn {
         }
     }
 
-    /// Get the collaborators of the data set.
-    pub fn get_dataset_collaborators(&self, id: DatasetNodeId) -> Future<response::Collaborators> {
-        get!(self, route!("/datasets/{id}/collaborators", id))
+    /// Get the user collaborators of the data set.
+    pub fn get_dataset_user_collaborators(&self, id: DatasetNodeId) -> Future<Vec<model::User>> {
+        get!(self, route!("/datasets/{id}/collaborators/users", id))
+    }
+
+    /// Get the team collaborators of the data set.
+    pub fn get_dataset_team_collaborators(&self, id: DatasetNodeId) -> Future<Vec<model::Team>> {
+        get!(self, route!("/datasets/{id}/collaborators/teams", id))
+    }
+
+    /// Get the organization role on the data set.
+    pub fn get_dataset_organization_role(
+        &self,
+        id: DatasetNodeId,
+    ) -> Future<response::OrganizationRole> {
+        get!(
+            self,
+            route!("/datasets/{id}/collaborators/organizations", id)
+        )
     }
 
     /// Update an existing dataset.
@@ -1468,6 +1484,66 @@ pub mod tests {
             }))
         });
         assert!(ds.is_err());
+    }
+
+    #[test]
+    fn fetch_dataset_user_collaborators() {
+        let collaborators = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_user_collaborators(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+
+        assert!(collaborators.iter().all(|c| c.role().is_some()));
+
+        let mut collaborators: Vec<(String, String)> = collaborators
+            .iter()
+            .map(|u| (u.first_name().clone(), u.role().unwrap().clone()))
+            .collect();
+        collaborators.sort();
+
+        let expected = vec![
+            ("Agent".to_string(), "owner".to_string()),
+            ("Matt".to_string(), "manager".to_string()),
+            ("Michael".to_string(), "manager".to_string()),
+            ("Peter".to_string(), "manager".to_string()),
+        ];
+
+        assert_eq!(collaborators, expected);
+    }
+
+    #[test]
+    fn fetch_dataset_team_collaborators() {
+        let collaborators = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_team_collaborators(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+        assert!(collaborators.iter().all(|c| c.role().is_some()));
+
+        let mut collaborators: Vec<(String, String)> = collaborators
+            .iter()
+            .map(|t| (t.name().clone(), t.role().unwrap().clone()))
+            .collect();
+        collaborators.sort();
+
+        let expected = vec![("Matt's Team".to_string(), "editor".to_string())];
+
+        assert_eq!(collaborators, expected);
+    }
+
+    #[test]
+    fn fetch_dataset_organization_role() {
+        let organization_role = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_organization_role(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+
+        assert_eq!(organization_role.role().clone(), "manager".to_string());
     }
 
     #[test]
