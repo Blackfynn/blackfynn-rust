@@ -1900,7 +1900,7 @@ pub mod tests {
                                 let p = path.to_path_buf();
                                 if !done.borrow().contains(&p) {
                                     println!("{:?} => {}%", p, update.percent_done());
-                                    if update.completed() {
+                                    if update.percent_done() >= 100.0 {
                                         done.borrow_mut().insert(p);
                                     }
                                 }
