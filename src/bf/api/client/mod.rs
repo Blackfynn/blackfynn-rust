@@ -294,32 +294,57 @@ impl Blackfynn {
                 // future terminating with an error containing the message
                 // emitted from the API:
                 let status_code = response.status();
+                let content_length = response
+                    .headers()
+                    .get("Content-Length")
+                    .map(|content_length| content_length.to_str().map(|s| s.to_string()))
+                    .unwrap_or_else(|| Ok(std::u32::MAX.to_string()))
+                    .map_err(Into::<Error>::into)
+                    .and_then(|content_length_string| {
+                        content_length_string.parse::<u32>().map_err(Into::into)
+                    });
                 response
                     .into_body()
                     .concat2()
                     .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
                     .map_err(Into::<Error>::into)
+                    .and_then(|(status_code, body)| {
+                        content_length
+                            .into_future()
+                            .map(move |content_length| (status_code, body, content_length))
+                    })
                     .and_then(
-                        move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
+                        move |(status_code, body, content_length): (
+                            hyper::StatusCode,
+                            hyper::Chunk,
+                            u32,
+                        )| {
                             if status_code.is_client_error() || status_code.is_server_error() {
                                 return future::err(Error::api_error(
                                     status_code,
                                     String::from_utf8_lossy(&body),
                                 ));
                             }
-                            future::ok((reporting_url, reporting_method, body))
+                            future::ok((reporting_url, reporting_method, body, content_length))
                         },
                     )
-                    .and_then(move |(reporting_url, reporting_method, body)| {
-                        debug!(
-                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                            method = reporting_method,
-                            url = reporting_url,
-                            payload = Self::chunk_to_string(&body)
-                        );
-                        // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice(&body).map_err(Into::into)
-                    })
+                    .and_then(
+                        move |(reporting_url, reporting_method, body, content_length)| {
+                            debug!(
+                                "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                method = reporting_method,
+                                url = reporting_url,
+                                payload = Self::chunk_to_string(&body)
+                            );
+                            // Finally, attempt to parse the JSON response into a typeful representation:
+
+                            if content_length > 0 {
+                                serde_json::from_slice(&body).map_err(Into::into)
+                            } else {
+                                serde_json::from_slice(b"null").map_err(Into::into)
+                            }
+                        },
+                    )
             });
 
         into_future_trait(f)
@@ -415,13 +440,9 @@ impl Blackfynn {
         description: Option<D>,
         automatically_process_packages: bool,
     ) -> Future<response::Dataset> {
-        let paylaod = request::dataset::Create::new(name, description, automatically_process_packages);
-        post!(
-            self,
-            "/datasets/",
-            params!(),
-            payload!(paylaod)
-        )
+        let paylaod =
+            request::dataset::Create::new(name, description, automatically_process_packages);
+        post!(self, "/datasets/", params!(), payload!(paylaod))
     }
 
     /// Create a new dataset with some request parameter defaults.
@@ -551,14 +572,11 @@ impl Blackfynn {
     }
 
     /// Process a package in the UPLOADED state.
-    pub fn process_package(
-        &self,
-        id: PackageId,
-    ) -> Future<()> {
-        put!(
-            self,
-            route!("/packages/{id}/process", id)
-        )
+    pub fn process_package(&self, id: PackageId) -> Future<()> {
+        let f =
+            put!(self, route!("/packages/{id}/process", id)).map(|response: serde_json::Value| ());
+
+        into_future_trait(f)
     }
 
     /// Get the members that belong to the current users organization.
@@ -1610,18 +1628,101 @@ pub mod tests {
         let resp = run(&bf(), move |bf| {
             into_future_trait(
                 bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.process_package(PackageId::new(FIXTURE_PACKAGE)))
+                    .and_then(move |_| bf.process_package(PackageId::new(FIXTURE_PACKAGE))),
             )
         });
 
         if let Err(e) = resp {
             match e.kind() {
-                ErrorKind::ApiError{ status_code, .. } => {
-                    assert_eq!(status_code.as_u16(), 400)
-                }
+                ErrorKind::ApiError { status_code, .. } => assert_eq!(status_code.as_u16(), 400),
                 _ => assert!(false),
             }
         }
+    }
+
+    #[test]
+    fn process_package_succeeds() {
+        let file_name = "test-tiny";
+        let file_paths = vec![format!("{}/{}.png", TEST_DATA_DIR.to_string(), file_name)];
+        let enumerated_files = add_upload_ids(&file_paths);
+        // create upload
+        let result = run(&bf(), |bf| {
+            upload_to_upload_service(bf, enumerated_files.clone())
+        });
+
+        let (_, dataset_id) = match result {
+            Ok(results) => results,
+            Err(err) => {
+                println!("{}", err.to_string());
+                panic!();
+            }
+        };
+        let package = run(&bf(), |bf| {
+            let bf_clone = bf.clone();
+            let dataset_id_clone = dataset_id.clone();
+            let f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| bf_clone.clone().get_dataset_by_id(dataset_id_clone))
+                .map(move |ds| {
+                    let file_name_clone = file_name.clone();
+                    ds.get_package_by_name(file_name_clone)
+                });
+            into_future_trait(f)
+        })
+        .unwrap()
+        .unwrap();
+
+        let now = std::time::SystemTime::now();
+        let sleep_duration = std::time::Duration::new(5, 0); // 5 seconds
+        let timeout_duration = std::time::Duration::new(60, 0); // 60 seconds
+        'infinite: loop {
+            if let Ok(elapsed) = now.elapsed() {
+                if elapsed > timeout_duration {
+                    panic!();
+                } else {
+                    let current_package_result = run(&bf(), |bf| {
+                        let bf_clone = bf.clone();
+                        let package = package.clone();
+                        let f = bf
+                            .login(TEST_API_KEY, TEST_SECRET_KEY)
+                            .and_then(move |_| bf_clone.get_package_by_id(package.id().clone()));
+                        into_future_trait(f)
+                    });
+                    if let Ok(current_package) = current_package_result {
+                        if current_package.state().unwrap().clone() == "UPLOADED".to_string() {
+                            let result = run(&bf(), |bf| {
+                                let bf_clone = bf.clone();
+                                let current_package_clone = current_package.clone();
+                                let f =
+                                    bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                                        bf_clone.process_package(current_package_clone.id().clone())
+                                    });
+                                into_future_trait(f)
+                            });
+                            if let Err(err) = result {
+                                println!("{}", err.to_string());
+                                panic!()
+                            }
+                            break 'infinite;
+                        } else {
+                            thread::sleep(sleep_duration);
+                        }
+                    } else {
+                        // if it isn't sleep and loop
+                        thread::sleep(sleep_duration);
+                    }
+                }
+            }
+        }
+        run(&bf(), |bf| {
+            let bf_clone = bf.clone();
+            let dataset_id_clone = dataset_id.clone();
+            let f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| bf_clone.delete_dataset(dataset_id_clone));
+            into_future_trait(f)
+        })
+        .unwrap();
     }
 
     #[test]
@@ -1931,89 +2032,100 @@ pub mod tests {
         }
     }
 
-    fn upload_to_upload_service(files: Vec<(UploadId, String)>) -> Result<()> {
+    fn upload_to_upload_service_with_delete(files: Vec<(UploadId, String)>) -> Result<()> {
         run(&bf(), move |bf| {
-            let files = files.clone();
-            let f = bf
-                .login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.create_dataset(
-                        rand_suffix("$agent-test-dataset".to_string()),
-                        Some("A test dataset created by the agent".to_string()),
-                    )
-                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
-                })
-                .and_then(|(bf, dataset_id, dataset_int_id)| {
-                    bf.get_user().map(|user| {
-                        (
-                            bf,
-                            dataset_id,
-                            user.preferred_organization().unwrap().clone(),
-                            dataset_int_id,
-                        )
-                    })
-                })
-                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
-                    bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
-                        &dataset_int_id,
-                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
-                        &files,
-                        false,
-                        false,
-                    )
-                    .map(|preview| (bf, dataset_id, organization_id, preview))
-                })
-                .and_then(move |(bf, dataset_id, organization_id, preview)| {
-                    let bf = bf.clone();
-                    let bf_clone = bf.clone();
-                    let dataset_id = dataset_id.clone();
-                    let dataset_id_clone = dataset_id.clone();
-
-                    let upload_futures = preview.into_iter().map(move |package| {
-                        let import_id = package.import_id().clone();
-                        let bf = bf.clone();
-                        let bf_clone = bf.clone();
-                        let organization_id = organization_id.clone();
-
-                        let dataset_id = dataset_id.clone();
-                        let package = package.clone();
-
-                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
-                            .to_path_buf()
-                            .canonicalize()
-                            .unwrap();
-
-                        let progress_indicator = ProgressIndicator::new();
-
-                        // upload using the retries function
-                        bf.upload_file_chunks_to_upload_service_retries(
-                            &organization_id,
-                            &import_id,
-                            &file_path,
-                            package.files().to_vec(),
-                            progress_indicator.clone(),
-                            1,
-                        )
-                        .collect()
-                        .map(|_| (bf_clone, dataset_id))
-                        .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
-                                &organization_id,
-                                &import_id,
-                                &dataset_id,
-                                None,
-                                false,
-                            )
-                        })
-                    });
-
-                    futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
-                })
+            let f = upload_to_upload_service(bf, files.clone())
                 .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         })
+    }
+
+    fn upload_to_upload_service(
+        bf: Blackfynn,
+        files: Vec<(UploadId, String)>,
+    ) -> Future<(Blackfynn, DatasetNodeId)> {
+        let files = files.clone();
+        let files_clone = files.clone();
+        let f = bf
+            .login(TEST_API_KEY, TEST_SECRET_KEY)
+            .and_then(move |_| {
+                bf.create_dataset(
+                    rand_suffix("$agent-test-dataset".to_string()),
+                    Some("A test dataset created by the agent".to_string()),
+                )
+                .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
+            })
+            .and_then(|(bf, dataset_id, dataset_int_id)| {
+                bf.get_user().map(|user| {
+                    (
+                        bf,
+                        dataset_id,
+                        user.preferred_organization().unwrap().clone(),
+                        dataset_int_id,
+                    )
+                })
+            })
+            .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                bf.preview_upload_using_upload_service(
+                    &organization_id.clone(),
+                    &dataset_int_id,
+                    Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                    &files,
+                    false,
+                    false,
+                )
+                .map(|preview| (bf, dataset_id, organization_id, preview))
+            })
+            .and_then(move |(bf, dataset_id, organization_id, preview)| {
+                let bf = bf.clone();
+                let bf_clone = bf.clone();
+                let dataset_id = dataset_id.clone();
+                let dataset_id_clone = dataset_id.clone();
+
+                let upload_futures = preview.into_iter().map(move |package| {
+                    let import_id = package.import_id().clone();
+                    let bf = bf.clone();
+                    let bf_clone = bf.clone();
+                    let organization_id = organization_id.clone();
+
+                    let dataset_id = dataset_id.clone();
+                    let package = package.clone();
+
+                    let head_file: PathBuf = files_clone[0].1.clone().into();
+                    let file_path = head_file.parent()
+                        .unwrap()
+                        .canonicalize()
+                        .unwrap();
+
+                    let progress_indicator = ProgressIndicator::new();
+
+                    // upload using the retries function
+                    bf.upload_file_chunks_to_upload_service_retries(
+                        &organization_id,
+                        &import_id,
+                        &file_path,
+                        package.files().to_vec(),
+                        progress_indicator.clone(),
+                        1,
+                    )
+                    .collect()
+                    .map(|_| (bf_clone, dataset_id))
+                    .and_then(move |(bf, dataset_id)| {
+                        bf.complete_upload_using_upload_service(
+                            &organization_id,
+                            &import_id,
+                            &dataset_id,
+                            None,
+                            false,
+                        )
+                    })
+                });
+
+                futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+            });
+
+        into_future_trait(f)
     }
 
     #[test]
@@ -2241,9 +2353,10 @@ pub mod tests {
 
     #[test]
     fn upload_to_upload_service_with_retries() {
-        let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
+        let file_paths: Vec<String> = MEDIUM_TEST_FILES.iter().map(|file_name| format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()).collect();
+        let enumerated_files = add_upload_ids(&file_paths);
         // create upload
-        let result = upload_to_upload_service(enumerated_files);
+        let result = upload_to_upload_service_with_delete(enumerated_files);
 
         // check result
         if result.is_err() {

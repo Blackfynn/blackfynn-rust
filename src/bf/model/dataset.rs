@@ -233,7 +233,6 @@ impl Dataset {
         &self.automatically_process_packages
     }
 
-
     #[allow(dead_code)]
     pub fn created_at(&self) -> &DateTime<Utc> {
         &self.created_at

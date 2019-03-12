@@ -92,7 +92,6 @@ impl ProgressUpdate {
 
     /// Returns the upload percentage completed.
     pub fn percent_done(&self) -> f32 {
-
         // when uploading an empty (0 byte) file, we send up a single
         // part with no data. Since we can't rely on `bytes_sent` to
         // track progress on an empty file, we instead look at the

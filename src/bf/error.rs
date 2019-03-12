@@ -2,9 +2,11 @@
 
 //! Errors specific to the Blackfynn platform.
 use std::path::PathBuf;
-use std::{fmt, io, result};
+use std::{fmt, io, num, result};
 
 use failure::{Backtrace, Context, Fail};
+
+use hyper::http::header::ToStrError;
 
 /// Type alias for handling errors throughout the agent
 pub type Result<T> = result::Result<T, Error>;
@@ -159,6 +161,9 @@ pub enum ErrorKind {
 
     #[fail(display = "json serialization error: {}", error)]
     SerdeJsonError { error: String },
+
+    #[fail(display = "error parsing string: {}", error)]
+    ParseIntError { error: String },
 }
 
 impl From<ErrorKind> for Error {
@@ -263,6 +268,20 @@ impl From<hyper::Error> for Error {
 impl From<hyper::http::uri::InvalidUri> for Error {
     fn from(error: hyper::http::uri::InvalidUri) -> Error {
         Error::from(Context::new(ErrorKind::HyperError {
+            error: error.to_string(),
+        }))
+    }
+}
+impl From<ToStrError> for Error {
+    fn from(error: ToStrError) -> Error {
+        Error::from(Context::new(ErrorKind::HyperError {
+            error: error.to_string(),
+        }))
+    }
+}
+impl From<num::ParseIntError> for Error {
+    fn from(error: num::ParseIntError) -> Error {
+        Error::from(Context::new(ErrorKind::ParseIntError {
             error: error.to_string(),
         }))
     }
