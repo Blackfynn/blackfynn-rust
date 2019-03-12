@@ -251,6 +251,7 @@ where
                                     file_path,
                                     updated_bytes_sent,
                                     file_size,
+                                    false
                                 );
 
                                 let progress = cb.lock().unwrap();
@@ -535,7 +536,7 @@ impl S3Uploader {
             })
             .and_then(move |_| {
                 let update =
-                    ProgressUpdate::new(1, import_id.clone(), file_path, file_size, file_size);
+                    ProgressUpdate::new(1, import_id.clone(), file_path, file_size, file_size, true);
                 cb.on_update(&update);
                 Ok(import_id)
             });

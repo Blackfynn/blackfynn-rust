@@ -121,12 +121,12 @@ impl ChunkedFilePayload {
             progress_callback: Box::new(progress_callback),
         };
 
-        payload.update_progress_callback();
+        payload.update_progress_callback(false);
 
         payload
     }
 
-    fn update_progress_callback(&self) {
+    fn update_progress_callback(&self, done: bool) {
         // initialize progress_callback with percentage
         let progress_update = ProgressUpdate::new(
             self.parts_sent,
@@ -134,6 +134,7 @@ impl ChunkedFilePayload {
             self.file_path.clone(),
             self.bytes_sent,
             self.file_size,
+            done
         );
         self.progress_callback.on_update(&progress_update);
     }
@@ -144,6 +145,7 @@ impl Stream for ChunkedFilePayload {
     type Error = io::Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
+        let mut done = false;
         let chunk = if self.file_size == 0 {
             // When the file size is 0, our iterator just needs to
             // send a single element with an empty buffer
@@ -155,9 +157,11 @@ impl Stream for ChunkedFilePayload {
                     chunk_number: self.parts_sent,
                 })))
             } else {
+                done = true;
                 Ok(Ready(None))
             }
         } else if self.expected_total_parts == Some(self.parts_sent) {
+            done = true;
             Ok(Ready(None))
         } else {
             let mut buffer = vec![0; self.chunk_size_bytes as usize];
@@ -201,12 +205,13 @@ impl Stream for ChunkedFilePayload {
                             chunk_number: seek_from_chunk_number,
                         }))
                     } else {
+                        done = true;
                         Ready(None)
                     }
                 })
         };
 
-        self.update_progress_callback();
+        self.update_progress_callback(done);
 
         chunk
     }
