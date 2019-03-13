@@ -296,12 +296,11 @@ impl Blackfynn {
                 let status_code = response.status();
                 let content_length = response
                     .headers()
-                    .get("Content-Length")
-                    .map(|content_length| content_length.to_str().map(|s| s.to_string()))
-                    .unwrap_or_else(|| Ok(std::u32::MAX.to_string()))
-                    .map_err(Into::<Error>::into)
+                    .get(hyper::header::CONTENT_LENGTH)
+                    .map(|content_length| content_length.to_str().map(|s| s.to_string()).map_err(Into::<Error>::into))
+                    .map_or(Ok(None), |content_length| content_length.map(Some))
                     .and_then(|content_length_string| {
-                        content_length_string.parse::<u32>().map_err(Into::into)
+                        content_length_string.map(|cl| cl.parse::<u32>().map_err(Into::into)).map_or(Ok(None), |cl| cl.map(Some))
                     });
                 response
                     .into_body()
@@ -317,7 +316,7 @@ impl Blackfynn {
                         move |(status_code, body, content_length): (
                             hyper::StatusCode,
                             hyper::Chunk,
-                            u32,
+                            Option<u32>,
                         )| {
                             if status_code.is_client_error() || status_code.is_server_error() {
                                 return future::err(Error::api_error(
@@ -338,10 +337,9 @@ impl Blackfynn {
                             );
                             // Finally, attempt to parse the JSON response into a typeful representation:
 
-                            if content_length > 0 {
-                                serde_json::from_slice(&body).map_err(Into::into)
-                            } else {
-                                serde_json::from_slice(b"null").map_err(Into::into)
+                            match content_length {
+                                Some(len) if len == 0 => serde_json::from_slice(b"null").map_err(Into::into),
+                                _ => serde_json::from_slice(&body).map_err(Into::into)
                             }
                         },
                     )
@@ -1676,42 +1674,35 @@ pub mod tests {
         let sleep_duration = std::time::Duration::new(5, 0); // 5 seconds
         let timeout_duration = std::time::Duration::new(60, 0); // 60 seconds
         'infinite: loop {
-            if let Ok(elapsed) = now.elapsed() {
-                if elapsed > timeout_duration {
-                    panic!();
-                } else {
-                    let current_package_result = run(&bf(), |bf| {
+            if now.elapsed().unwrap() < timeout_duration {
+                let current_package = run(&bf(), |bf| {
+                    let bf_clone = bf.clone();
+                    let package = package.clone();
+                    let f = bf
+                        .login(TEST_API_KEY, TEST_SECRET_KEY)
+                        .and_then(move |_| bf_clone.get_package_by_id(package.id().clone()));
+                    into_future_trait(f)
+                }).unwrap();
+                if current_package.state().unwrap().clone() == "UPLOADED".to_string() {
+                    let result = run(&bf(), |bf| {
                         let bf_clone = bf.clone();
-                        let package = package.clone();
-                        let f = bf
-                            .login(TEST_API_KEY, TEST_SECRET_KEY)
-                            .and_then(move |_| bf_clone.get_package_by_id(package.id().clone()));
+                        let current_package_clone = current_package.clone();
+                        let f =
+                            bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                                bf_clone.process_package(current_package_clone.id().clone())
+                            });
                         into_future_trait(f)
                     });
-                    if let Ok(current_package) = current_package_result {
-                        if current_package.state().unwrap().clone() == "UPLOADED".to_string() {
-                            let result = run(&bf(), |bf| {
-                                let bf_clone = bf.clone();
-                                let current_package_clone = current_package.clone();
-                                let f =
-                                    bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                                        bf_clone.process_package(current_package_clone.id().clone())
-                                    });
-                                into_future_trait(f)
-                            });
-                            if let Err(err) = result {
-                                println!("{}", err.to_string());
-                                panic!()
-                            }
-                            break 'infinite;
-                        } else {
-                            thread::sleep(sleep_duration);
-                        }
-                    } else {
-                        // if it isn't sleep and loop
-                        thread::sleep(sleep_duration);
+                    if let Err(err) = result {
+                        println!("{}", err.to_string());
+                        panic!()
                     }
+                    break 'infinite;
+                } else {
+                    thread::sleep(sleep_duration);
                 }
+            } else {
+                panic!()
             }
         }
         run(&bf(), |bf| {
