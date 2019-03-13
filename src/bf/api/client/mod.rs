@@ -766,6 +766,7 @@ impl Blackfynn {
         let bf = self.clone();
         let organization_id = organization_id.clone();
         let import_id = import_id.clone();
+        let progress_callback = progress_callback.clone();
 
         let fs = stream::futures_unordered(
             files
@@ -788,48 +789,46 @@ impl Blackfynn {
                 None => None,
             };
 
-            let chunked_file_payload =
-                if let Some(chunked_upload_properties) = file.chunked_upload() {
-                    debug!(
-                        "bf:upload_file_chunks<file = {file_name}> :: \
-                         Chunk size received from the upload service: {chunk_size}.",
-                        file_name = file.file_name(),
-                        chunk_size = chunked_upload_properties.chunk_size
-                    );
+            let chunked_file_payload = if let Some(chunked_upload_properties) =
+                file.chunked_upload()
+            {
+                debug!(
+                    "bf:upload_file_chunks<file = {file_name}> :: \
+                     Chunk size received from the upload service: {chunk_size}.",
+                    file_name = file.file_name(),
+                    chunk_size = chunked_upload_properties.chunk_size
+                );
 
-                    ChunkedFilePayload::new_with_chunk_size(
-                        import_id.clone(),
-                        file_path,
-                        chunked_upload_properties.chunk_size,
-                        file_missing_parts.as_ref(),
-                        progress_callback.clone(),
-                    )
-                } else {
-                    debug!(
-                        "bf:upload_file_chunks<file = {file_name}> :: \
-                         No chunk size received from the upload service. \
-                         Falling back to default.",
-                        file_name = file.file_name()
-                    );
-                    ChunkedFilePayload::new(
-                        import_id.clone(),
-                        file_path,
-                        file_missing_parts.as_ref(),
-                        progress_callback.clone(),
-                    )
-                };
+                ChunkedFilePayload::new_with_chunk_size(
+                    import_id.clone(),
+                    file_path,
+                    chunked_upload_properties.chunk_size,
+                    file_missing_parts.as_ref(),
+                )
+            } else {
+                debug!(
+                    "bf:upload_file_chunks<file = {file_name}> :: \
+                     No chunk size received from the upload service. \
+                     Falling back to default.",
+                    file_name = file.file_name()
+                );
+                ChunkedFilePayload::new(import_id.clone(), file_path, file_missing_parts.as_ref())
+            };
 
             let bf = bf.clone();
             let organization_id = organization_id.clone();
             let import_id = import_id.clone();
+            let progress_callback = progress_callback.clone();
 
             chunked_file_payload
-                .map(move |file_chunk| {
+                .map(move |(file_chunk, progress_update)| {
                     if let Some(MultipartUploadId(multipart_upload_id)) = file.multipart_upload_id()
                     {
                         let import_id = import_id.clone();
                         let import_id_clone = import_id.clone();
                         let organization_id = organization_id.clone();
+                        let progress_callback = progress_callback.clone();
+
                         into_future_trait(
                             bf.request_with_body(
                                 route!(
@@ -850,6 +849,7 @@ impl Blackfynn {
                             .and_then(
                                 move |response: response::UploadResponse| {
                                     if response.success {
+                                        progress_callback.on_update(&progress_update.clone());
                                         future::ok(import_id_clone)
                                     } else {
                                         future::err(Error::upload_error(

@@ -46,7 +46,7 @@ pub struct ProgressUpdate {
     file_path: PathBuf,
     bytes_sent: u64,
     size: u64,
-    done: bool
+    done: bool,
 }
 
 impl ProgressUpdate {
@@ -56,7 +56,7 @@ impl ProgressUpdate {
         file_path: PathBuf,
         bytes_sent: u64,
         size: u64,
-        done: bool
+        done: bool,
     ) -> Self {
         Self {
             part_number,
@@ -64,7 +64,7 @@ impl ProgressUpdate {
             file_path,
             bytes_sent,
             size,
-            done
+            done,
         }
     }
 
