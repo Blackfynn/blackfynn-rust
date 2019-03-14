@@ -8,6 +8,7 @@ pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProg
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{iter, time};
@@ -15,7 +16,7 @@ use std::{iter, time};
 use futures::{Future as _Future, Stream as _Stream, *};
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
-use hyper::{self, StatusCode};
+use hyper::{self, Method, StatusCode};
 use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
 use log::debug;
@@ -40,14 +41,34 @@ const X_SESSION_ID: &str = "X-SESSION-ID";
 const MAX_RETRIES: usize = 20;
 
 lazy_static! {
-    static ref RETRYABLE_STATUS_CODES: Vec<StatusCode> = vec![
-        // 4XX
-        StatusCode::TOO_MANY_REQUESTS,
-        // 5XX
-        StatusCode::SERVICE_UNAVAILABLE,
-        StatusCode::BAD_GATEWAY,
-        StatusCode::GATEWAY_TIMEOUT,
+    static ref ALL_METHODS: Vec<hyper::Method> = vec![
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::HEAD,
+        Method::OPTIONS,
+        Method::CONNECT,
+        Method::PATCH,
+        Method::TRACE,
     ];
+    static ref NON_IDEMPOTENT_METHODS: Vec<hyper::Method> = vec![
+        Method::POST, Method::DELETE
+    ];
+    static ref IDEMPOTENT_METHODS: Vec<hyper::Method> = ALL_METHODS
+        .clone()
+        .into_iter()
+        .filter(|method| !NON_IDEMPOTENT_METHODS.contains(method))
+        .collect();
+
+    static ref RETRYABLE_STATUS_CODES: HashMap<StatusCode, Vec<hyper::Method>> = vec![
+        // 4XX
+        (StatusCode::TOO_MANY_REQUESTS, ALL_METHODS.clone()),
+        // 5XX
+        (StatusCode::SERVICE_UNAVAILABLE, ALL_METHODS.clone()),
+        (StatusCode::BAD_GATEWAY, IDEMPOTENT_METHODS.clone()),
+        (StatusCode::GATEWAY_TIMEOUT, IDEMPOTENT_METHODS.clone()),
+    ].into_iter().collect();
 }
 
 struct BlackFynnImpl {
@@ -320,29 +341,35 @@ impl Blackfynn {
                     .and_then(|(status_code, body)| {
                         // if the status code is considered retryable, wait for a few seconds and
                         // restart the loop to retry again.
-                        if RETRYABLE_STATUS_CODES.contains(&status_code) {
-                            retry_state.try_num += 1;
+                        match RETRYABLE_STATUS_CODES.get(&status_code) {
+                            Some(retryable_methods)
+                                if retryable_methods.contains(&retry_state.method) =>
+                            {
+                                retry_state.try_num += 1;
 
-                            if retry_state.try_num > MAX_RETRIES {
-                                into_future_trait(future::err(ErrorKind::RetriesExceeded.into()))
-                            } else {
-                                let delay = 1000 * retry_state.try_num;
-                                debug!("Rate limit exceeded, retrying in {} ms...", delay);
+                                if retry_state.try_num > MAX_RETRIES {
+                                    into_future_trait(future::err(
+                                        ErrorKind::RetriesExceeded.into(),
+                                    ))
+                                } else {
+                                    let delay = 1000 * retry_state.try_num;
+                                    debug!("Rate limit exceeded, retrying in {} ms...", delay);
 
-                                let deadline = time::Instant::now()
-                                    + time::Duration::from_millis(delay as u64);
-                                let continue_loop = tokio::timer::Delay::new(deadline)
-                                    .map_err(Into::into)
-                                    .map(move |_| future::Loop::Continue(retry_state));
-                                into_future_trait(continue_loop)
+                                    let deadline = time::Instant::now()
+                                        + time::Duration::from_millis(delay as u64);
+                                    let continue_loop = tokio::timer::Delay::new(deadline)
+                                        .map_err(Into::into)
+                                        .map(move |_| future::Loop::Continue(retry_state));
+                                    into_future_trait(continue_loop)
+                                }
                             }
-                        } else if status_code.is_client_error() || status_code.is_server_error() {
-                            into_future_trait(future::err(Error::api_error(
-                                status_code,
-                                String::from_utf8_lossy(&body),
-                            )))
-                        } else {
-                            into_future_trait(future::ok(future::Loop::Break(body)))
+                            _ if status_code.is_client_error() || status_code.is_server_error() => {
+                                into_future_trait(future::err(Error::api_error(
+                                    status_code,
+                                    String::from_utf8_lossy(&body),
+                                )))
+                            }
+                            _ => into_future_trait(future::ok(future::Loop::Break(body))),
                         }
                     })
             });
