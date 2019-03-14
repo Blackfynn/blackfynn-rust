@@ -75,9 +75,12 @@ lazy_static! {
 
 /// Given the number of the current attempt, calculate the delay (in
 /// milliseconds) for how long we should wait until the next retry
-/// using an exponential backoff algorithm
+///
+/// # Arguments
+///
+/// * `try_num` - The number of this attempt, indexed at 0
 fn retry_delay(try_num: usize) -> u64 {
-    500 * 2_u64.pow(try_num as u32 - 1)
+    500 * try_num as u64
 }
 
 struct BlackFynnImpl {
