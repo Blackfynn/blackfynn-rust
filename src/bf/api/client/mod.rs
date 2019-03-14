@@ -17,6 +17,7 @@ use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
 use hyper::{self, StatusCode};
 use hyper_tls::HttpsConnector;
+use lazy_static::lazy_static;
 use log::debug;
 use serde;
 use serde_json;
@@ -35,6 +36,19 @@ use crate::bf::{Error, ErrorKind, Future, Result, Stream};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
+
+const MAX_RETRIES: usize = 20;
+
+lazy_static! {
+    static ref RETRYABLE_STATUS_CODES: Vec<StatusCode> = vec![
+        // 4XX
+        StatusCode::TOO_MANY_REQUESTS,
+        // 5XX
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::BAD_GATEWAY,
+        StatusCode::GATEWAY_TIMEOUT,
+    ];
+}
 
 struct BlackFynnImpl {
     config: Config,
@@ -304,25 +318,24 @@ impl Blackfynn {
                         retry_state.additional_headers.clone(),
                     )
                     .and_then(|(status_code, body)| {
-                        let retryable_status_codes = vec![
-                            StatusCode::TOO_MANY_REQUESTS,
-                            StatusCode::SERVICE_UNAVAILABLE,
-                        ];
-
                         // if the status code is considered retryable, wait for a few seconds and
                         // restart the loop to retry again.
-                        if retryable_status_codes.contains(&status_code) {
+                        if RETRYABLE_STATUS_CODES.contains(&status_code) {
                             retry_state.try_num += 1;
 
-                            let delay = 1000 * retry_state.try_num;
-                            debug!("Rate limit exceeded, retrying in {} ms...", delay);
+                            if retry_state.try_num > MAX_RETRIES {
+                                into_future_trait(future::err(ErrorKind::RetriesExceeded.into()))
+                            } else {
+                                let delay = 1000 * retry_state.try_num;
+                                debug!("Rate limit exceeded, retrying in {} ms...", delay);
 
-                            let deadline =
-                                time::Instant::now() + time::Duration::from_millis(delay as u64);
-                            let continue_loop = tokio::timer::Delay::new(deadline)
-                                .map_err(Into::into)
-                                .map(move |_| future::Loop::Continue(retry_state));
-                            into_future_trait(continue_loop)
+                                let deadline = time::Instant::now()
+                                    + time::Duration::from_millis(delay as u64);
+                                let continue_loop = tokio::timer::Delay::new(deadline)
+                                    .map_err(Into::into)
+                                    .map(move |_| future::Loop::Continue(retry_state));
+                                into_future_trait(continue_loop)
+                            }
                         } else if status_code.is_client_error() || status_code.is_server_error() {
                             into_future_trait(future::err(Error::api_error(
                                 status_code,
