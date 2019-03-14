@@ -238,6 +238,12 @@ impl Blackfynn {
     /// to the platform. This function is specifically useful when
     /// uploading files, for example.
     ///
+    /// If retry_on_failure is set, this function will retry the
+    /// request. This means that when ever it sends a request, it must
+    /// save a copy of the given byte payload in case it needs to
+    /// retry again. Therefore, we try not to use retry_on_failure for
+    /// requests with large byte payloads (such as uploads).
+    ///
     /// # Arguments
     ///
     /// * `route` - The target Blackfynn API route
@@ -245,8 +251,7 @@ impl Blackfynn {
     /// * `params` - Query params to include in the request
     /// * `body` - A byte array payload
     /// * `additional_headers` - Additional headers to include
-    /// * `retry_on_failure` - If true, this function will retry when it
-    ///       receives a 429 response.
+    /// * `retry_on_failure` - Whether to retry the request on failure
     /// ```
     fn request_with_body<I, Q, S>(
         &self,
@@ -266,6 +271,8 @@ impl Blackfynn {
         let params: Vec<RequestParam> = params.into_iter().collect();
 
         let response = if retry_on_failure {
+            //  A retry state object that is threaded through the
+            //  retry loop in order to track state
             struct RetryState {
                 bf: Blackfynn,
                 route: String,
@@ -286,7 +293,7 @@ impl Blackfynn {
                 try_num: 0,
             };
 
-            let f = future::loop_fn(retry_state, move |retry_state| {
+            let f = future::loop_fn(retry_state, move |mut retry_state| {
                 retry_state
                     .bf
                     .single_request(
@@ -297,7 +304,11 @@ impl Blackfynn {
                         retry_state.additional_headers.clone(),
                     )
                     .and_then(|(status_code, body)| {
+                        // if the status code indicates that we've exceeded the rate limit,
+                        // wait for a few seconds and restart the loop to retry again.
                         if status_code == hyper::StatusCode::TOO_MANY_REQUESTS {
+                            retry_state.try_num += 1;
+
                             let delay = 1000 * retry_state.try_num;
                             debug!("Rate limit exceeded, retrying in {} ms...", delay);
 
