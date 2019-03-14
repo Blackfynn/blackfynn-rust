@@ -61,6 +61,8 @@ lazy_static! {
         .filter(|method| !NON_IDEMPOTENT_METHODS.contains(method))
         .collect();
 
+    /// A map of retryable status codes to the list of methods that we
+    /// want to retry for those status codes.
     static ref RETRYABLE_STATUS_CODES: HashMap<StatusCode, Vec<hyper::Method>> = vec![
         // 4XX
         (StatusCode::TOO_MANY_REQUESTS, ALL_METHODS.clone()),
