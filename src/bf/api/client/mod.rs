@@ -357,10 +357,10 @@ impl Blackfynn {
         into_future_trait(json)
     }
 
-    /// Make a single request to the platform. This function is meant
-    /// to only be used by `request` and `request_with_body` when for
-    /// when retrying requests, and those functions should be used
-    /// instead of this one to send requests to the platform.
+    /// Make a single request to the platform. This function is used
+    /// by `request` and `request_with_body`, so those functions
+    /// should be preferred over this one for making requests to the
+    /// platform.
     ///
     /// # Arguments
     ///
