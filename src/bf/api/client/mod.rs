@@ -512,22 +512,31 @@ impl Blackfynn {
     }
 
     /// Create a new package.
-    pub fn create_package<N, D, P>(
+    /// TODO: see https://github.com/Blackfynn/blackfynn-rust/pull/45/files#r265581502
+    /// for a strategy for cleaning up API functions with many optional arguments.
+    pub fn create_package<N, D, P, F>(
         &self,
         name: N,
         package_type: P,
         dataset: D,
+        parent: Option<F>,
     ) -> Future<response::Package>
     where
         D: Into<DatasetNodeId>,
         N: Into<String>,
         P: Into<String>,
+        F: Into<String>,
     {
         post!(
             self,
             "/packages/",
             params!(),
-            payload!(request::package::Create::new(name, package_type, dataset))
+            payload!(request::package::Create::new(
+                name,
+                package_type,
+                dataset,
+                parent
+            ))
         )
     }
 
@@ -552,6 +561,21 @@ impl Blackfynn {
             route!("/packages/{id}", id),
             params!(),
             payload!(request::package::Update::new(name))
+        )
+    }
+
+    /// Move several packages to a destination package.
+    /// If destination is None, the package is moved to the top level of the dataset.
+    pub fn mv<T: Into<PackageId>, D: Into<PackageId>>(
+        &self,
+        things: Vec<T>,
+        destination: Option<D>,
+    ) -> Future<response::MoveResponse> {
+        post!(
+            self,
+            "/data/move",
+            params!(),
+            payload!(request::mv::Move::new(things, destination))
         )
     }
 
@@ -1642,8 +1666,13 @@ pub mod tests {
                     })
                     .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, ds_id)| {
-                        bf.create_package(rand_suffix("$agent-test-package"), "Text", ds_id.clone())
-                            .map(|pkg| (bf, ds_id, pkg))
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|pkg| (bf, ds_id, pkg))
                     })
                     .and_then(move |(bf, ds_id, pkg)| {
                         let pkg_id = pkg.take().id().clone();
@@ -1655,6 +1684,126 @@ pub mod tests {
                             assert_eq!(pkg.take().name().clone(), "new-package-name".to_string());
                             Ok((bf, ds_id))
                         })
+                    })
+                    .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().to_string());
+        }
+    }
+
+    #[test]
+    fn move_package_to_toplevel() {
+        let result = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, ds_id)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-collection"),
+                            "Collection",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|col| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            Some(col.id().clone()),
+                        )
+                        .map(|pkg| (bf, ds_id, pkg, col))
+                    })
+                    .and_then(move |(bf, ds_id, pkg, col)| {
+                        // Move package to top-level of dataset
+                        bf.mv(vec![pkg.take().id().clone()], None as Option<PackageId>)
+                            .map(|_| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_dataset_by_id(ds_id.clone()).and_then(|dataset| {
+                            // Dataset now has two children ($agent-test-collection and $agent-test-package)
+                            assert_eq!(dataset.children().unwrap().len(), 2);
+                            Ok((bf, ds_id, col))
+                        })
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_package_by_id(col.id().clone())
+                            .and_then(|collection| {
+                                // Collection now has no children
+                                assert_eq!(collection.children().unwrap().len(), 0);
+                                Ok((bf, ds_id))
+                            })
+                    })
+                    .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().to_string());
+        }
+    }
+
+    #[test]
+    fn move_package_to_collection() {
+        let result = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, ds_id)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-collection"),
+                            "Collection",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|col| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|pkg| (bf, ds_id, pkg, col))
+                    })
+                    .and_then(move |(bf, ds_id, pkg, col)| {
+                        // Move package into $agent-test-collection
+                        bf.mv(vec![pkg.take().id().clone()], Some(col.id().clone()))
+                            .map(|_| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_dataset_by_id(ds_id.clone()).and_then(|dataset| {
+                            // Dataset now has one child
+                            assert_eq!(dataset.children().unwrap().len(), 1);
+                            Ok((bf, ds_id, col))
+                        })
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_package_by_id(col.id().clone())
+                            .and_then(|collection| {
+                                // Collection now has one child
+                                assert_eq!(collection.children().unwrap().len(), 1);
+                                Ok((bf, ds_id))
+                            })
                     })
                     .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
             )

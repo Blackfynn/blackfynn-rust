@@ -5,6 +5,7 @@
 mod account;
 pub mod chunked_http;
 pub mod dataset;
+pub mod mv;
 pub mod package;
 mod upload;
 mod user;
