@@ -95,6 +95,12 @@ impl fmt::Display for Error {
     }
 }
 
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        self.kind().clone().into()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Fail)]
 pub enum ErrorKind {
     #[fail(display = "api error: {} {}", status_code, message)]

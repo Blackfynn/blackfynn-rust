@@ -200,7 +200,7 @@ impl Blackfynn {
                     .map(Into::into)
                     .map_err(Into::<Error>::into)
             })
-            .unwrap_or_else(|| Ok(hyper::Body::empty()))
+            .unwrap_or_else(|| Ok(vec![]))
             .map_err(Into::into);
 
         match serialized_payload {
@@ -213,6 +213,7 @@ impl Blackfynn {
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 )],
+                true,
             ),
             Err(err) => into_future_trait(futures::failed(err)),
         }
@@ -223,42 +224,127 @@ impl Blackfynn {
         route: S,
         method: hyper::Method,
         params: I,
-        body: hyper::Body,
+        body: Vec<u8>,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
+        retry_on_failure: bool,
     ) -> Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
-        let url = self.get_url();
+        let route: String = route.into();
+        let params: Vec<RequestParam> = params.into_iter().collect();
 
-        // Build the request url: config environment base + route:
-        let mut use_url = url.clone();
-        use_url.set_path(&route.into());
+        let response = if retry_on_failure {
+            struct RetryState {
+                bf: Blackfynn,
+                route: String,
+                params: Vec<RequestParam>,
+                method: hyper::Method,
+                body: Vec<u8>,
+                additional_headers: Vec<(HeaderName, HeaderValue)>,
+                try_num: usize,
+            }
 
+            let retry_state = RetryState {
+                bf: self.clone(),
+                route,
+                params,
+                method,
+                body,
+                additional_headers,
+                try_num: 0,
+            };
+
+            let f = future::loop_fn(retry_state, move |retry_state| {
+                retry_state
+                    .bf
+                    .single_request(
+                        retry_state.route.clone(),
+                        retry_state.params.clone(),
+                        retry_state.method.clone(),
+                        retry_state.body.clone().into(),
+                        retry_state.additional_headers.clone(),
+                    )
+                    .and_then(|(status_code, body)| {
+                        if status_code == hyper::StatusCode::TOO_MANY_REQUESTS {
+                            let delay = 1000 * retry_state.try_num;
+                            debug!("Rate limit exceeded, retrying in {} ms...", delay);
+
+                            let deadline =
+                                time::Instant::now() + time::Duration::from_millis(delay as u64);
+                            let continue_loop = tokio::timer::Delay::new(deadline)
+                                .map_err(Into::into)
+                                .map(move |_| future::Loop::Continue(retry_state));
+                            into_future_trait(continue_loop)
+                        } else if status_code.is_client_error() || status_code.is_server_error() {
+                            into_future_trait(future::err(Error::api_error(
+                                status_code,
+                                String::from_utf8_lossy(&body),
+                            )))
+                        } else {
+                            into_future_trait(future::ok(future::Loop::Break(body)))
+                        }
+                    })
+            });
+            into_future_trait(f)
+        } else {
+            let f = self
+                .single_request(
+                    route,
+                    params,
+                    method,
+                    body.into(),
+                    additional_headers.clone(),
+                )
+                .and_then(|(status_code, body)| {
+                    if status_code.is_client_error() || status_code.is_server_error() {
+                        future::err(Error::api_error(
+                            status_code,
+                            String::from_utf8_lossy(&body),
+                        ))
+                    } else {
+                        future::ok(body)
+                    }
+                });
+            into_future_trait(f)
+        };
+
+        // Finally, attempt to parse the JSON response into a typeful representation:
+        let json = response.and_then(|body| serde_json::from_slice(&body).map_err(Into::into));
+
+        into_future_trait(json)
+    }
+
+    fn single_request(
+        &self,
+        route: String,
+        params: Vec<RequestParam>,
+        method: hyper::Method,
+        body: hyper::Body,
+        additional_headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Future<(hyper::StatusCode, hyper::Chunk)> {
         let token = self.session_token().clone();
         let client = self.inner.lock().unwrap().http_client.clone();
 
+        let mut url = self.get_url();
+        url.set_path(&route);
+
         // If query parameters are provided, add them to the constructed URL:
         for (k, v) in params {
-            use_url
-                .query_pairs_mut()
-                .append_pair(k.as_str(), v.as_str());
+            url.query_pairs_mut().append_pair(k.as_str(), v.as_str());
         }
 
-        // Lift the URL and body into Future:
-        let uri = use_url
+        let f = url
             .to_string()
             .parse::<hyper::Uri>()
             .map_err(Into::<Error>::into)
-            .into_future();
-
-        let f = uri
+            .into_future()
             .and_then(move |uri| {
                 let mut req = hyper::Request::builder()
                     .method(method.clone())
-                    .uri(uri.clone())
+                    .uri(uri)
                     .body(body)
                     .unwrap();
 
@@ -280,45 +366,25 @@ impl Blackfynn {
                     req.headers_mut().insert(header_name, header_value);
                 }
 
-                let reporting_url: String = uri.to_string();
-                let reporting_method: String = method.to_string();
-
                 // Make the actual request:
                 client
                     .request(req)
-                    .map(|response| (reporting_url, reporting_method, response))
                     .map_err(Into::into)
-            })
-            .and_then(move |(reporting_url, reporting_method, response)| {
-                // Check the status code. And 5XX code will result in the
-                // future terminating with an error containing the message
-                // emitted from the API:
-                let status_code = response.status();
-                response
-                    .into_body()
-                    .concat2()
-                    .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
-                    .map_err(Into::<Error>::into)
-                    .and_then(
-                        move |(status_code, body): (hyper::StatusCode, hyper::Chunk)| {
-                            if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(Error::api_error(
-                                    status_code,
-                                    String::from_utf8_lossy(&body),
-                                ));
-                            }
-                            future::ok((reporting_url, reporting_method, body))
-                        },
-                    )
-                    .and_then(move |(reporting_url, reporting_method, body)| {
-                        debug!(
-                            "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                            method = reporting_method,
-                            url = reporting_url,
-                            payload = Self::chunk_to_string(&body)
-                        );
-                        // Finally, attempt to parse the JSON response into a typeful representation:
-                        serde_json::from_slice(&body).map_err(Into::into)
+                    .and_then(|response| {
+                        let status_code = response.status();
+                        response
+                            .into_body()
+                            .concat2()
+                            .map(move |body: hyper::Chunk| {
+                                debug!(
+                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method,
+                                    url = url,
+                                    payload = Self::chunk_to_string(&body)
+                                );
+                                (status_code, body)
+                            })
+                            .map_err(Into::into)
                     })
             });
 
@@ -867,8 +933,9 @@ impl Blackfynn {
                                     "chunkChecksum" => file_chunk.checksum.0,
                                     "chunkNumber" => file_chunk.chunk_number.to_string()
                                 ),
-                                hyper::Body::from(file_chunk.bytes),
+                                file_chunk.bytes,
                                 vec![],
+                                false,
                             )
                             .and_then(
                                 move |response: response::UploadResponse| {
