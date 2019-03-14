@@ -181,6 +181,19 @@ impl Blackfynn {
         self.inner.lock().unwrap().config.env().url().clone()
     }
 
+    /// Make a request to the given route using the given json payload
+    /// as a request body. This function will automatically retry if
+    /// it receives a 429 response (rate limit exceeded) from the
+    /// blackfynn API.
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `method` - The HTTP method
+    /// * `params` - Query params to include in the request
+    /// * `payload` - A json-serializable payload to send to the platform
+    ///       along with the request
+    /// ```
     fn request<I, P, Q, S>(
         &self,
         route: S,
@@ -219,6 +232,22 @@ impl Blackfynn {
         }
     }
 
+    /// Make a request to the given route using the given byte payload
+    /// as a request body. This is a more low-level function than the
+    /// above `request` function, as it allows you to send raw bytes
+    /// to the platform. This function is specifically useful when
+    /// uploading files, for example.
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `method` - The HTTP method
+    /// * `params` - Query params to include in the request
+    /// * `body` - A byte array payload
+    /// * `additional_headers` - Additional headers to include
+    /// * `retry_on_failure` - If true, this function will retry when it
+    ///       receives a 429 response.
+    /// ```
     fn request_with_body<I, Q, S>(
         &self,
         route: S,
@@ -317,6 +346,19 @@ impl Blackfynn {
         into_future_trait(json)
     }
 
+    /// Make a single request to the platform. This function is meant
+    /// to only be used by `request` and `request_with_body` when for
+    /// when retrying requests, and those functions should be used
+    /// instead of this one to send requests to the platform.
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `params` - Query params to include in the request
+    /// * `method` - The HTTP method
+    /// * `body` - A byte array payload
+    /// * `additional_headers` - Additional headers to include
+    /// ```
     fn single_request(
         &self,
         route: String,
