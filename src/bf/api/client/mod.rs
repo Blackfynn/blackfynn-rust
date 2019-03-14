@@ -73,6 +73,13 @@ lazy_static! {
     ].into_iter().collect();
 }
 
+/// Given the number of the current attempt, calculate the delay (in
+/// milliseconds) for how long we should wait until the next retry
+/// using an exponential backoff algorithm
+fn retry_delay(try_num: usize) -> u64 {
+    500 * 2_u64.pow(try_num as u32 - 1)
+}
+
 struct BlackFynnImpl {
     config: Config,
     http_client: Client<HttpsConnector<HttpConnector>>,
@@ -354,11 +361,11 @@ impl Blackfynn {
                                         ErrorKind::RetriesExceeded.into(),
                                     ))
                                 } else {
-                                    let delay = 1000 * retry_state.try_num;
+                                    let delay = retry_delay(retry_state.try_num);
                                     debug!("Rate limit exceeded, retrying in {} ms...", delay);
 
-                                    let deadline = time::Instant::now()
-                                        + time::Duration::from_millis(delay as u64);
+                                    let deadline =
+                                        time::Instant::now() + time::Duration::from_millis(delay);
                                     let continue_loop = tokio::timer::Delay::new(deadline)
                                         .map_err(Into::into)
                                         .map(move |_| future::Loop::Continue(retry_state));
@@ -1153,9 +1160,6 @@ impl Blackfynn {
         };
 
         let retry_loop = future::loop_fn(ld, |mut ld| {
-            let max_retries = 10;
-            let delay_millis_multiplier = 100;
-
             let mut ld_err = ld.clone();
 
             ld.bf
@@ -1181,13 +1185,13 @@ impl Blackfynn {
                 })
                 .into_future()
                 .or_else(move |err| {
-                    if max_retries > ld_err.try_num {
+                    if MAX_RETRIES > ld_err.try_num {
                         if ld_err.failed {
                             ld_err.try_num += 1;
                         } else {
                             ld_err.try_num = 1;
                         }
-                        let delay = delay_millis_multiplier * ld_err.try_num * ld_err.try_num;
+                        let delay = retry_delay(ld_err.try_num);
 
                         ld_err.failed = true;
 
@@ -1195,13 +1199,13 @@ impl Blackfynn {
                         debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
-                        let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
+                        let deadline = time::Instant::now() + time::Duration::from_millis(delay);
                         let continue_loop = tokio::timer::Delay::new(deadline)
                             .map_err(Into::<Error>::into)
                             .map(move |_| {
                                 debug!(
                                     "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
-                                    try_num = ld_err.try_num, retries = max_retries
+                                    try_num = ld_err.try_num, retries = MAX_RETRIES
                                 );
                                 future::Loop::Continue(ld_err)
                             });
