@@ -13,9 +13,9 @@ use std::sync::{Arc, Mutex};
 use std::{iter, time};
 
 use futures::{Future as _Future, Stream as _Stream, *};
-use hyper;
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
+use hyper::{self, StatusCode};
 use hyper_tls::HttpsConnector;
 use log::debug;
 use serde;
@@ -304,9 +304,14 @@ impl Blackfynn {
                         retry_state.additional_headers.clone(),
                     )
                     .and_then(|(status_code, body)| {
-                        // if the status code indicates that we've exceeded the rate limit,
-                        // wait for a few seconds and restart the loop to retry again.
-                        if status_code == hyper::StatusCode::TOO_MANY_REQUESTS {
+                        let retryable_status_codes = vec![
+                            StatusCode::TOO_MANY_REQUESTS,
+                            StatusCode::SERVICE_UNAVAILABLE,
+                        ];
+
+                        // if the status code is considered retryable, wait for a few seconds and
+                        // restart the loop to retry again.
+                        if retryable_status_codes.contains(&status_code) {
                             retry_state.try_num += 1;
 
                             let delay = 1000 * retry_state.try_num;
@@ -377,7 +382,7 @@ impl Blackfynn {
         method: hyper::Method,
         body: hyper::Body,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
-    ) -> Future<(hyper::StatusCode, hyper::Chunk)> {
+    ) -> Future<(StatusCode, hyper::Chunk)> {
         let token = self.session_token().clone();
         let client = self.inner.lock().unwrap().http_client.clone();
 
