@@ -41,7 +41,7 @@ const X_SESSION_ID: &str = "X-SESSION-ID";
 const MAX_RETRIES: usize = 20;
 
 lazy_static! {
-    static ref ALL_METHODS: Vec<hyper::Method> = vec![
+    static ref ALL_METHODS: Vec<Method> = vec![
         Method::GET,
         Method::POST,
         Method::PUT,
@@ -52,10 +52,10 @@ lazy_static! {
         Method::PATCH,
         Method::TRACE,
     ];
-    static ref NON_IDEMPOTENT_METHODS: Vec<hyper::Method> = vec![
+    static ref NON_IDEMPOTENT_METHODS: Vec<Method> = vec![
         Method::POST, Method::DELETE
     ];
-    static ref IDEMPOTENT_METHODS: Vec<hyper::Method> = ALL_METHODS
+    static ref IDEMPOTENT_METHODS: Vec<Method> = ALL_METHODS
         .clone()
         .into_iter()
         .filter(|method| !NON_IDEMPOTENT_METHODS.contains(method))
@@ -63,7 +63,7 @@ lazy_static! {
 
     /// A map of retryable status codes to the list of methods that we
     /// want to retry for those status codes.
-    static ref RETRYABLE_STATUS_CODES: HashMap<StatusCode, Vec<hyper::Method>> = vec![
+    static ref RETRYABLE_STATUS_CODES: HashMap<StatusCode, Vec<Method>> = vec![
         // 4XX
         (StatusCode::TOO_MANY_REQUESTS, ALL_METHODS.clone()),
         // 5XX
@@ -155,46 +155,46 @@ macro_rules! payload {
 
 macro_rules! get {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::GET, params!(), payload!())
+        $target.request($route, Method::GET, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::GET, $params, payload!())
+        $target.request($route, Method::GET, $params, payload!())
     };
 }
 
 macro_rules! post {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::POST, params!(), payload!())
+        $target.request($route, Method::POST, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!())
+        $target.request($route, Method::POST, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!($payload))
+        $target.request($route, Method::POST, $params, payload!($payload))
     };
 }
 
 macro_rules! put {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::PUT, params!(), payload!())
+        $target.request($route, Method::PUT, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!())
+        $target.request($route, Method::PUT, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!($payload))
+        $target.request($route, Method::PUT, $params, payload!($payload))
     };
 }
 
 macro_rules! delete {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::DELETE, params!(), payload!())
+        $target.request($route, Method::DELETE, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!())
+        $target.request($route, Method::DELETE, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!($payload))
+        $target.request($route, Method::DELETE, $params, payload!($payload))
     };
 }
 
@@ -244,7 +244,7 @@ impl Blackfynn {
     fn request<I, P, Q, S>(
         &self,
         route: S,
-        method: hyper::Method,
+        method: Method,
         params: I,
         payload: Option<&P>,
     ) -> Future<Q>
@@ -303,7 +303,7 @@ impl Blackfynn {
     fn request_with_body<I, Q, S>(
         &self,
         route: S,
-        method: hyper::Method,
+        method: Method,
         params: I,
         body: Vec<u8>,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
@@ -324,7 +324,7 @@ impl Blackfynn {
                 bf: Blackfynn,
                 route: String,
                 params: Vec<RequestParam>,
-                method: hyper::Method,
+                method: Method,
                 body: Vec<u8>,
                 additional_headers: Vec<(HeaderName, HeaderValue)>,
                 try_num: usize,
@@ -431,7 +431,7 @@ impl Blackfynn {
         &self,
         route: String,
         params: Vec<RequestParam>,
-        method: hyper::Method,
+        method: Method,
         body: hyper::Body,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
     ) -> Future<(StatusCode, hyper::Chunk)> {
@@ -1036,7 +1036,7 @@ impl Blackfynn {
                                     organization_id,
                                     import_id
                                 ),
-                                hyper::Method::POST,
+                                Method::POST,
                                 params!(
                                     "filename" => file.file_name().to_string(),
                                     "multipartId" => multipart_upload_id.to_string(),
