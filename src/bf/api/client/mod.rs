@@ -512,6 +512,8 @@ impl Blackfynn {
     }
 
     /// Create a new package.
+    /// TODO: see https://github.com/Blackfynn/blackfynn-rust/pull/45/files#r265581502
+    /// for a strategy for cleaning up API functions with many optional arguments.
     pub fn create_package<N, D, P, F>(
         &self,
         name: N,
