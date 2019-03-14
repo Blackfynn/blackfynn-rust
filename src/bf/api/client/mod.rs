@@ -569,7 +569,6 @@ impl Blackfynn {
         things: Vec<T>,
         destination: Option<D>,
     ) -> Future<response::MoveResponse> {
-        // TODO: return response
         post!(
             self,
             "/data/move",
