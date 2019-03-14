@@ -1163,7 +1163,7 @@ impl Blackfynn {
                     ld.failed = false;
                     ld
                 })
-                .and_then(|mut ld| {
+                .and_then(|ld| {
                     ld.bf
                         .upload_file_chunks_to_upload_service(
                             &ld.organization_id,
@@ -1175,10 +1175,7 @@ impl Blackfynn {
                             ld.parallelism,
                         )
                         .collect()
-                        .map(|successful_result| {
-                            ld.result = Some(successful_result);
-                            future::Loop::Break(ld)
-                        })
+                        .map(future::Loop::Break)
                 })
                 .into_future()
                 .or_else(move |err| {
@@ -1198,7 +1195,7 @@ impl Blackfynn {
                         // delay
                         let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
                         let continue_loop = tokio::timer::Delay::new(deadline)
-                            .map_err(Into::into)
+                            .map_err(Into::<Error>::into)
                             .map(move |_| {
                                 debug!(
                                     "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
@@ -1208,24 +1205,19 @@ impl Blackfynn {
                             });
                         into_future_trait(continue_loop)
                     } else {
-                        into_future_trait(future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, Error>(
-                            future::Loop::Break(ld_err),
-                        ))
+                        into_future_trait(future::err(ErrorKind::RetriesExceeded.into()))
                     }
                 })
         })
-        .map(|ld| {
-            match ld.result {
-                Some(import_ids) => future::ok::<Stream<ImportId>, Error>(
-                    into_stream_trait(stream::futures_unordered(
-                        import_ids
-                            .iter()
-                            .map(|import_id| future::ok(import_id.clone())),
-                    )),
-                )
-                .into_stream(),
-                None => future::err(ErrorKind::RetriesExceeded.into()).into_stream(),
-            }
+        .map(|import_ids| {
+            future::ok::<Stream<ImportId>, Error>(
+                into_stream_trait(stream::futures_unordered(
+                    import_ids
+                        .iter()
+                        .map(|import_id| future::ok(import_id.clone())),
+                )),
+            )
+                .into_stream()
             .flatten()
         })
         .into_stream()
