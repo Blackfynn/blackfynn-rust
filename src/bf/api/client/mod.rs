@@ -1735,9 +1735,9 @@ pub mod tests {
 
         let organization_role = (
             organization_role.name().clone(),
-            organization_role.role().clone(),
+            organization_role.role().cloned(),
         );
-        let expected = ("Blackfynn".to_string(), "manager".to_string());
+        let expected = ("Blackfynn".to_string(), Some("manager".to_string()));
 
         assert_eq!(organization_role, expected);
     }
