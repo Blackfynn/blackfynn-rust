@@ -101,7 +101,7 @@ impl IntoIterator for Organizations {
 pub struct OrganizationRole {
     id: String,
     name: String,
-    role: String,
+    role: Option<String>,
 }
 
 impl OrganizationRole {
@@ -113,7 +113,7 @@ impl OrganizationRole {
         &self.name
     }
 
-    pub fn role(&self) -> &String {
-        &self.role
+    pub fn role(&self) -> Option<&String> {
+        self.role.as_ref()
     }
 }
