@@ -7,7 +7,7 @@ use futures::Async::Ready;
 use sha2::{Digest, Sha256};
 use tokio::prelude::{Async, Stream};
 
-use crate::bf::api::client::progress::{ProgressCallback, ProgressUpdate};
+use crate::bf::api::client::progress::ProgressUpdate;
 use crate::bf::api::response::FileMissingParts;
 use crate::bf::model::upload::Checksum;
 use crate::bf::model::ImportId;
@@ -28,7 +28,6 @@ pub struct ChunkedFilePayload {
     parts_sent: usize,
     expected_total_parts: Option<usize>,
     missing_parts: Vec<usize>,
-    progress_callback: Box<dyn ProgressCallback>,
 }
 
 pub struct FileChunk {
@@ -38,35 +37,30 @@ pub struct FileChunk {
 }
 
 impl ChunkedFilePayload {
-    pub fn new<P, C>(
+    pub fn new<P>(
         import_id: ImportId,
         file_path: P,
         missing_parts: Option<&FileMissingParts>,
-        progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
-        C: 'static + ProgressCallback,
     {
         Self::new_with_chunk_size(
             import_id,
             file_path,
             DEFAULT_CHUNK_SIZE_BYTES,
             missing_parts,
-            progress_callback,
         )
     }
 
-    pub fn new_with_chunk_size<P, C>(
+    pub fn new_with_chunk_size<P>(
         import_id: ImportId,
         file_path: P,
         chunk_size_bytes: u64,
         missing_parts: Option<&FileMissingParts>,
-        progress_callback: C,
     ) -> Self
     where
         P: AsRef<Path>,
-        C: 'static + ProgressCallback,
     {
         // ensure missing parts are sorted
         let mut sorted_missing_parts = missing_parts
@@ -118,29 +112,29 @@ impl ChunkedFilePayload {
             parts_sent,
             expected_total_parts,
             missing_parts: sorted_missing_parts,
-            progress_callback: Box::new(progress_callback),
         };
-
-        payload.update_progress_callback();
 
         payload
     }
 
-    fn update_progress_callback(&self) {
-        // initialize progress_callback with percentage
-        let progress_update = ProgressUpdate::new(
+    fn build_progress_update(&self, done: bool) -> ProgressUpdate {
+        ProgressUpdate::new(
             self.parts_sent,
             self.import_id.clone(),
             self.file_path.clone(),
             self.bytes_sent,
             self.file_size,
-        );
-        self.progress_callback.on_update(&progress_update);
+            done,
+        )
+    }
+
+    fn all_parts_sent(&self) -> bool {
+        self.expected_total_parts == Some(self.parts_sent)
     }
 }
 
 impl Stream for ChunkedFilePayload {
-    type Item = FileChunk;
+    type Item = (FileChunk, ProgressUpdate);
     type Error = io::Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
@@ -149,15 +143,18 @@ impl Stream for ChunkedFilePayload {
             // send a single element with an empty buffer
             if self.parts_sent == 0 {
                 self.parts_sent += 1;
-                Ok(Ready(Some(FileChunk {
-                    bytes: vec![],
-                    checksum: Checksum(String::from(EMPTY_SHA256_HASH)),
-                    chunk_number: self.parts_sent,
-                })))
+                Ok(Ready(Some((
+                    FileChunk {
+                        bytes: vec![],
+                        checksum: Checksum(String::from(EMPTY_SHA256_HASH)),
+                        chunk_number: self.parts_sent,
+                    },
+                    self.build_progress_update(true),
+                ))))
             } else {
                 Ok(Ready(None))
             }
-        } else if self.expected_total_parts == Some(self.parts_sent) {
+        } else if self.all_parts_sent() {
             Ok(Ready(None))
         } else {
             let mut buffer = vec![0; self.chunk_size_bytes as usize];
@@ -195,19 +192,19 @@ impl Stream for ChunkedFilePayload {
 
                         self.parts_sent += 1;
 
-                        Ready(Some(FileChunk {
-                            bytes: buffer,
-                            checksum: Checksum(format!("{:x}", sha256_hasher.result())),
-                            chunk_number: seek_from_chunk_number,
-                        }))
+                        Ready(Some((
+                            FileChunk {
+                                bytes: buffer,
+                                checksum: Checksum(format!("{:x}", sha256_hasher.result())),
+                                chunk_number: seek_from_chunk_number,
+                            },
+                            self.build_progress_update(self.all_parts_sent()),
+                        )))
                     } else {
                         Ready(None)
                     }
                 })
         };
-
-        self.update_progress_callback();
-
         chunk
     }
 }
@@ -230,17 +227,12 @@ mod tests {
         test_file_path
     }
 
-    fn progress_indicator() -> client::tests::ProgressIndicator {
-        client::tests::ProgressIndicator::new()
-    }
-
     fn chunked_payload() -> ChunkedFilePayload {
         ChunkedFilePayload::new_with_chunk_size(
             ImportId::new("import id"),
             test_file_path(),
             1000 * 1000, // 1mb
             None,
-            progress_indicator(),
         )
     }
 
@@ -250,12 +242,23 @@ mod tests {
             test_file_path(),
             1000 * 1000, // 1mb
             Some(missing_parts),
-            progress_indicator(),
         )
     }
 
     fn chunks(payload: &mut ChunkedFilePayload) -> Vec<FileChunk> {
-        payload.collect().wait().unwrap()
+        payload
+            .map(|(chunk, _progress)| chunk)
+            .collect()
+            .wait()
+            .unwrap()
+    }
+
+    fn progress(payload: &mut ChunkedFilePayload) -> Vec<ProgressUpdate> {
+        payload
+            .map(|(_chunk, progress)| progress)
+            .collect()
+            .wait()
+            .unwrap()
     }
 
     #[test]
@@ -377,51 +380,20 @@ mod tests {
 
     #[test]
     fn zero_byte_files_progress_is_updated_correctly() {
-        use std::sync;
-
-        struct Inner(sync::Mutex<bool>);
-
-        impl Inner {
-            pub fn new() -> Self {
-                Inner(sync::Mutex::new(false))
-            }
-        }
-        pub struct ProgressIndicator {
-            inner: sync::Arc<Inner>,
-        }
-
-        impl ProgressIndicator {
-            pub fn new() -> Self {
-                Self {
-                    inner: sync::Arc::new(Inner::new()),
-                }
-            }
-        }
-
-        impl ProgressCallback for ProgressIndicator {
-            fn on_update(&self, _update: &ProgressUpdate) {
-                if _update.part_number() == 0 {
-                    assert_eq!(_update.percent_done(), 0 as f32)
-                } else {
-                    assert_eq!(_update.percent_done(), 100 as f32);
-                }
-
-                *self.inner.0.lock().unwrap() = true;
-            }
-        }
-
         let mut zero_byte_chunked_payload = ChunkedFilePayload::new(
             ImportId::new("import_id"),
             concat!(env!("CARGO_MANIFEST_DIR"), "/test/data/small/empty_file").to_owned(),
             None,
-            ProgressIndicator::new(),
         );
 
         assert!(zero_byte_chunked_payload.parts_sent == 0);
 
-        zero_byte_chunked_payload.poll().unwrap();
+        let progresses = progress(&mut zero_byte_chunked_payload);
 
-        assert!(zero_byte_chunked_payload.parts_sent == 1);
+        assert!(progresses.len() == 1);
+        let progress = &progresses[0];
+        assert_eq!(progress.percent_done(), 100 as f32);
+        assert_eq!(progress.is_done(), true);
     }
 
 }

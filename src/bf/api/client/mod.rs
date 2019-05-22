@@ -8,15 +8,17 @@ pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProg
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
 use std::borrow::Borrow;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{iter, time};
 
 use futures::{Future as _Future, Stream as _Stream, *};
-use hyper;
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{HeaderName, HeaderValue};
+use hyper::{self, Method, StatusCode};
 use hyper_tls::HttpsConnector;
+use lazy_static::lazy_static;
 use log::debug;
 use serde;
 use serde_json;
@@ -35,6 +37,51 @@ use crate::bf::{Error, ErrorKind, Future, Result, Stream};
 
 // Blackfynn session authentication header:
 const X_SESSION_ID: &str = "X-SESSION-ID";
+
+const MAX_RETRIES: usize = 20;
+
+lazy_static! {
+    static ref ALL_METHODS: Vec<Method> = vec![
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::HEAD,
+        Method::OPTIONS,
+        Method::CONNECT,
+        Method::PATCH,
+        Method::TRACE,
+    ];
+    static ref NON_IDEMPOTENT_METHODS: Vec<Method> = vec![
+        Method::POST, Method::DELETE
+    ];
+    static ref IDEMPOTENT_METHODS: Vec<Method> = ALL_METHODS
+        .clone()
+        .into_iter()
+        .filter(|method| !NON_IDEMPOTENT_METHODS.contains(method))
+        .collect();
+
+    /// A map of retryable status codes to the list of methods that we
+    /// want to retry for those status codes.
+    static ref RETRYABLE_STATUS_CODES: HashMap<StatusCode, Vec<Method>> = vec![
+        // 4XX
+        (StatusCode::TOO_MANY_REQUESTS, ALL_METHODS.clone()),
+        // 5XX
+        (StatusCode::SERVICE_UNAVAILABLE, ALL_METHODS.clone()),
+        (StatusCode::BAD_GATEWAY, IDEMPOTENT_METHODS.clone()),
+        (StatusCode::GATEWAY_TIMEOUT, IDEMPOTENT_METHODS.clone()),
+    ].into_iter().collect();
+}
+
+/// Given the number of the current attempt, calculate the delay (in
+/// milliseconds) for how long we should wait until the next retry
+///
+/// # Arguments
+///
+/// * `try_num` - The number of this attempt, indexed at 0
+fn retry_delay(try_num: usize) -> u64 {
+    500 * try_num as u64
+}
 
 struct BlackFynnImpl {
     config: Config,
@@ -108,46 +155,46 @@ macro_rules! payload {
 
 macro_rules! get {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::GET, params!(), payload!())
+        $target.request($route, Method::GET, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::GET, $params, payload!())
+        $target.request($route, Method::GET, $params, payload!())
     };
 }
 
 macro_rules! post {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::POST, params!(), payload!())
+        $target.request($route, Method::POST, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!())
+        $target.request($route, Method::POST, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::POST, $params, payload!($payload))
+        $target.request($route, Method::POST, $params, payload!($payload))
     };
 }
 
 macro_rules! put {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::PUT, params!(), payload!())
+        $target.request($route, Method::PUT, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!())
+        $target.request($route, Method::PUT, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::PUT, $params, payload!($payload))
+        $target.request($route, Method::PUT, $params, payload!($payload))
     };
 }
 
 macro_rules! delete {
     ($target:expr, $route:expr) => {
-        $target.request($route, hyper::Method::DELETE, params!(), payload!())
+        $target.request($route, Method::DELETE, params!(), payload!())
     };
     ($target:expr, $route:expr, $params:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!())
+        $target.request($route, Method::DELETE, $params, payload!())
     };
     ($target:expr, $route:expr, $params:expr, $payload:expr) => {
-        $target.request($route, hyper::Method::DELETE, $params, payload!($payload))
+        $target.request($route, Method::DELETE, $params, payload!($payload))
     };
 }
 
@@ -181,10 +228,23 @@ impl Blackfynn {
         self.inner.lock().unwrap().config.env().url().clone()
     }
 
+    /// Make a request to the given route using the given json payload
+    /// as a request body. This function will automatically retry if
+    /// it receives a 429 response (rate limit exceeded) from the
+    /// blackfynn API.
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `method` - The HTTP method
+    /// * `params` - Query params to include in the request
+    /// * `payload` - A json-serializable payload to send to the platform
+    ///       along with the request
+    /// ```
     fn request<I, P, Q, S>(
         &self,
         route: S,
-        method: hyper::Method,
+        method: Method,
         params: I,
         payload: Option<&P>,
     ) -> Future<Q>
@@ -200,7 +260,7 @@ impl Blackfynn {
                     .map(Into::into)
                     .map_err(Into::<Error>::into)
             })
-            .unwrap_or_else(|| Ok(hyper::Body::empty()))
+            .unwrap_or_else(|| Ok(vec![]))
             .map_err(Into::into);
 
         match serialized_payload {
@@ -213,52 +273,188 @@ impl Blackfynn {
                     hyper::header::CONTENT_TYPE,
                     hyper::header::HeaderValue::from_str("application/json").unwrap(),
                 )],
+                true,
             ),
             Err(err) => into_future_trait(futures::failed(err)),
         }
     }
 
+    /// Make a request to the given route using the given byte payload
+    /// as a request body. This is a more low-level function than the
+    /// above `request` function, as it allows you to send raw bytes
+    /// to the platform. This function is specifically useful when
+    /// uploading files, for example.
+    ///
+    /// If retry_on_failure is set, this function will retry the
+    /// request. This means that when ever it sends a request, it must
+    /// save a copy of the given byte payload in case it needs to
+    /// retry again. Therefore, we try not to use retry_on_failure for
+    /// requests with large byte payloads (such as uploads).
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `method` - The HTTP method
+    /// * `params` - Query params to include in the request
+    /// * `body` - A byte array payload
+    /// * `additional_headers` - Additional headers to include
+    /// * `retry_on_failure` - Whether to retry the request on failure
+    /// ```
     fn request_with_body<I, Q, S>(
         &self,
         route: S,
-        method: hyper::Method,
+        method: Method,
         params: I,
-        body: hyper::Body,
+        body: Vec<u8>,
         additional_headers: Vec<(HeaderName, HeaderValue)>,
+        retry_on_failure: bool,
     ) -> Future<Q>
     where
         I: IntoIterator<Item = RequestParam>,
         Q: 'static + Send + serde::de::DeserializeOwned,
         S: Into<String>,
     {
-        let url = self.get_url();
+        let route: String = route.into();
+        let params: Vec<RequestParam> = params.into_iter().collect();
 
-        // Build the request url: config environment base + route:
-        let mut use_url = url.clone();
-        use_url.set_path(&route.into());
+        let response = if retry_on_failure {
+            //  A retry state object that is threaded through the
+            //  retry loop in order to track state
+            struct RetryState {
+                bf: Blackfynn,
+                route: String,
+                params: Vec<RequestParam>,
+                method: Method,
+                body: Vec<u8>,
+                additional_headers: Vec<(HeaderName, HeaderValue)>,
+                try_num: usize,
+            }
 
+            let retry_state = RetryState {
+                bf: self.clone(),
+                route,
+                params,
+                method,
+                body,
+                additional_headers,
+                try_num: 0,
+            };
+
+            let f = future::loop_fn(retry_state, move |mut retry_state| {
+                retry_state
+                    .bf
+                    .single_request(
+                        retry_state.route.clone(),
+                        retry_state.params.clone(),
+                        retry_state.method.clone(),
+                        retry_state.body.clone().into(),
+                        retry_state.additional_headers.clone(),
+                    )
+                    .and_then(|(status_code, body)| {
+                        // if the status code is considered retryable, wait for a few seconds and
+                        // restart the loop to retry again.
+                        match RETRYABLE_STATUS_CODES.get(&status_code) {
+                            Some(retryable_methods)
+                                if retryable_methods.contains(&retry_state.method) =>
+                            {
+                                retry_state.try_num += 1;
+
+                                if retry_state.try_num > MAX_RETRIES {
+                                    into_future_trait(future::err(
+                                        ErrorKind::RetriesExceeded.into(),
+                                    ))
+                                } else {
+                                    let delay = retry_delay(retry_state.try_num);
+                                    debug!("Rate limit exceeded, retrying in {} ms...", delay);
+
+                                    let deadline =
+                                        time::Instant::now() + time::Duration::from_millis(delay);
+                                    let continue_loop = tokio::timer::Delay::new(deadline)
+                                        .map_err(Into::into)
+                                        .map(move |_| future::Loop::Continue(retry_state));
+                                    into_future_trait(continue_loop)
+                                }
+                            }
+                            _ if status_code.is_client_error() || status_code.is_server_error() => {
+                                into_future_trait(future::err(Error::api_error(
+                                    status_code,
+                                    String::from_utf8_lossy(&body),
+                                )))
+                            }
+                            _ => into_future_trait(future::ok(future::Loop::Break(body))),
+                        }
+                    })
+            });
+            into_future_trait(f)
+        } else {
+            let f = self
+                .single_request(
+                    route,
+                    params,
+                    method,
+                    body.into(),
+                    additional_headers.clone(),
+                )
+                .and_then(|(status_code, body)| {
+                    if status_code.is_client_error() || status_code.is_server_error() {
+                        future::err(Error::api_error(
+                            status_code,
+                            String::from_utf8_lossy(&body),
+                        ))
+                    } else {
+                        future::ok(body)
+                    }
+                });
+            into_future_trait(f)
+        };
+
+        // Finally, attempt to parse the JSON response into a typeful representation:
+        let json = response.and_then(|body| serde_json::from_slice(&body).map_err(Into::into));
+
+        into_future_trait(json)
+    }
+
+    /// Make a single request to the platform. This function is used
+    /// by `request` and `request_with_body`, so those functions
+    /// should be preferred over this one for making requests to the
+    /// platform.
+    ///
+    /// # Arguments
+    ///
+    /// * `route` - The target Blackfynn API route
+    /// * `params` - Query params to include in the request
+    /// * `method` - The HTTP method
+    /// * `body` - A byte array payload
+    /// * `additional_headers` - Additional headers to include
+    /// ```
+    fn single_request(
+        &self,
+        route: String,
+        params: Vec<RequestParam>,
+        method: Method,
+        body: hyper::Body,
+        additional_headers: Vec<(HeaderName, HeaderValue)>,
+    ) -> Future<(StatusCode, hyper::Chunk)> {
         let token = self.session_token().clone();
         let client = self.inner.lock().unwrap().http_client.clone();
 
+        let mut url = self.get_url();
+        url.set_path(&route);
+
         // If query parameters are provided, add them to the constructed URL:
         for (k, v) in params {
-            use_url
-                .query_pairs_mut()
-                .append_pair(k.as_str(), v.as_str());
+            url.query_pairs_mut().append_pair(k.as_str(), v.as_str());
         }
 
-        // Lift the URL and body into Future:
-        let uri = use_url
+        let f = url
             .to_string()
             .parse::<hyper::Uri>()
             .map_err(Into::<Error>::into)
-            .into_future();
-
-        let f = uri
+            .into_future()
             .and_then(move |uri| {
                 let mut req = hyper::Request::builder()
                     .method(method.clone())
-                    .uri(uri.clone())
+                    .uri(uri)
                     .body(body)
                     .unwrap();
 
@@ -280,69 +476,26 @@ impl Blackfynn {
                     req.headers_mut().insert(header_name, header_value);
                 }
 
-                let reporting_url: String = uri.to_string();
-                let reporting_method: String = method.to_string();
-
                 // Make the actual request:
                 client
                     .request(req)
-                    .map(|response| (reporting_url, reporting_method, response))
                     .map_err(Into::into)
-            })
-            .and_then(move |(reporting_url, reporting_method, response)| {
-                // Check the status code. And 5XX code will result in the
-                // future terminating with an error containing the message
-                // emitted from the API:
-                let status_code = response.status();
-                let content_length = response
-                    .headers()
-                    .get(hyper::header::CONTENT_LENGTH)
-                    .map(|content_length| content_length.to_str().map(|s| s.to_string()).map_err(Into::<Error>::into))
-                    .map_or(Ok(None), |content_length| content_length.map(Some))
-                    .and_then(|content_length_string| {
-                        content_length_string.map(|cl| cl.parse::<u32>().map_err(Into::into)).map_or(Ok(None), |cl| cl.map(Some))
-                    });
-                response
-                    .into_body()
-                    .concat2()
-                    .and_then(move |body: hyper::Chunk| Ok((status_code, body)))
-                    .map_err(Into::<Error>::into)
-                    .and_then(|(status_code, body)| {
-                        content_length
-                            .into_future()
-                            .map(move |content_length| (status_code, body, content_length))
+                    .and_then(|response| {
+                        let status_code = response.status();
+                        response
+                            .into_body()
+                            .concat2()
+                            .map(move |body: hyper::Chunk| {
+                                debug!(
+                                    "bf:request<{method}:{url}>:serialize:payload = {payload}",
+                                    method = method,
+                                    url = url,
+                                    payload = Self::chunk_to_string(&body)
+                                );
+                                (status_code, body)
+                            })
+                            .map_err(Into::into)
                     })
-                    .and_then(
-                        move |(status_code, body, content_length): (
-                            hyper::StatusCode,
-                            hyper::Chunk,
-                            Option<u32>,
-                        )| {
-                            if status_code.is_client_error() || status_code.is_server_error() {
-                                return future::err(Error::api_error(
-                                    status_code,
-                                    String::from_utf8_lossy(&body),
-                                ));
-                            }
-                            future::ok((reporting_url, reporting_method, body, content_length))
-                        },
-                    )
-                    .and_then(
-                        move |(reporting_url, reporting_method, body, content_length)| {
-                            debug!(
-                                "bf:request<{method}:{url}>:serialize:payload = {payload}",
-                                method = reporting_method,
-                                url = reporting_url,
-                                payload = Self::chunk_to_string(&body)
-                            );
-                            // Finally, attempt to parse the JSON response into a typeful representation:
-
-                            match content_length {
-                                Some(len) if len == 0 => serde_json::from_slice(b"null").map_err(Into::into),
-                                _ => serde_json::from_slice(&body).map_err(Into::into)
-                            }
-                        },
-                    )
             });
 
         into_future_trait(f)
@@ -499,9 +652,25 @@ impl Blackfynn {
         }
     }
 
-    /// Get the collaborators of the data set.
-    pub fn get_dataset_collaborators(&self, id: DatasetNodeId) -> Future<response::Collaborators> {
-        get!(self, route!("/datasets/{id}/collaborators", id))
+    /// Get the user collaborators of the data set.
+    pub fn get_dataset_user_collaborators(&self, id: DatasetNodeId) -> Future<Vec<model::User>> {
+        get!(self, route!("/datasets/{id}/collaborators/users", id))
+    }
+
+    /// Get the team collaborators of the data set.
+    pub fn get_dataset_team_collaborators(&self, id: DatasetNodeId) -> Future<Vec<model::Team>> {
+        get!(self, route!("/datasets/{id}/collaborators/teams", id))
+    }
+
+    /// Get the organization role on the data set.
+    pub fn get_dataset_organization_role(
+        &self,
+        id: DatasetNodeId,
+    ) -> Future<response::OrganizationRole> {
+        get!(
+            self,
+            route!("/datasets/{id}/collaborators/organizations", id)
+        )
     }
 
     /// Update an existing dataset.
@@ -526,22 +695,31 @@ impl Blackfynn {
     }
 
     /// Create a new package.
-    pub fn create_package<N, D, P>(
+    /// TODO: see https://github.com/Blackfynn/blackfynn-rust/pull/45/files#r265581502
+    /// for a strategy for cleaning up API functions with many optional arguments.
+    pub fn create_package<N, D, P, F>(
         &self,
         name: N,
         package_type: P,
         dataset: D,
+        parent: Option<F>,
     ) -> Future<response::Package>
     where
         D: Into<DatasetNodeId>,
         N: Into<String>,
         P: Into<String>,
+        F: Into<String>,
     {
         post!(
             self,
             "/packages/",
             params!(),
-            payload!(request::package::Create::new(name, package_type, dataset))
+            payload!(request::package::Create::new(
+                name,
+                package_type,
+                dataset,
+                parent
+            ))
         )
     }
 
@@ -575,6 +753,21 @@ impl Blackfynn {
             put!(self, route!("/packages/{id}/process", id)).map(|response: serde_json::Value| ());
 
         into_future_trait(f)
+    }
+
+    /// Move several packages to a destination package.
+    /// If destination is None, the package is moved to the top level of the dataset.
+    pub fn mv<T: Into<PackageId>, D: Into<PackageId>>(
+        &self,
+        things: Vec<T>,
+        destination: Option<D>,
+    ) -> Future<response::MoveResponse> {
+        post!(
+            self,
+            "/data/move",
+            params!(),
+            payload!(request::mv::Move::new(things, destination))
+        )
     }
 
     /// Get the members that belong to the current users organization.
@@ -788,6 +981,7 @@ impl Blackfynn {
         let bf = self.clone();
         let organization_id = organization_id.clone();
         let import_id = import_id.clone();
+        let progress_callback = progress_callback.clone();
 
         let fs = stream::futures_unordered(
             files
@@ -810,48 +1004,46 @@ impl Blackfynn {
                 None => None,
             };
 
-            let chunked_file_payload =
-                if let Some(chunked_upload_properties) = file.chunked_upload() {
-                    debug!(
-                        "bf:upload_file_chunks<file = {file_name}> :: \
-                         Chunk size received from the upload service: {chunk_size}.",
-                        file_name = file.file_name(),
-                        chunk_size = chunked_upload_properties.chunk_size
-                    );
+            let chunked_file_payload = if let Some(chunked_upload_properties) =
+                file.chunked_upload()
+            {
+                debug!(
+                    "bf:upload_file_chunks<file = {file_name}> :: \
+                     Chunk size received from the upload service: {chunk_size}.",
+                    file_name = file.file_name(),
+                    chunk_size = chunked_upload_properties.chunk_size
+                );
 
-                    ChunkedFilePayload::new_with_chunk_size(
-                        import_id.clone(),
-                        file_path,
-                        chunked_upload_properties.chunk_size,
-                        file_missing_parts.as_ref(),
-                        progress_callback.clone(),
-                    )
-                } else {
-                    debug!(
-                        "bf:upload_file_chunks<file = {file_name}> :: \
-                         No chunk size received from the upload service. \
-                         Falling back to default.",
-                        file_name = file.file_name()
-                    );
-                    ChunkedFilePayload::new(
-                        import_id.clone(),
-                        file_path,
-                        file_missing_parts.as_ref(),
-                        progress_callback.clone(),
-                    )
-                };
+                ChunkedFilePayload::new_with_chunk_size(
+                    import_id.clone(),
+                    file_path,
+                    chunked_upload_properties.chunk_size,
+                    file_missing_parts.as_ref(),
+                )
+            } else {
+                debug!(
+                    "bf:upload_file_chunks<file = {file_name}> :: \
+                     No chunk size received from the upload service. \
+                     Falling back to default.",
+                    file_name = file.file_name()
+                );
+                ChunkedFilePayload::new(import_id.clone(), file_path, file_missing_parts.as_ref())
+            };
 
             let bf = bf.clone();
             let organization_id = organization_id.clone();
             let import_id = import_id.clone();
+            let progress_callback = progress_callback.clone();
 
             chunked_file_payload
-                .map(move |file_chunk| {
+                .map(move |(file_chunk, progress_update)| {
                     if let Some(MultipartUploadId(multipart_upload_id)) = file.multipart_upload_id()
                     {
                         let import_id = import_id.clone();
                         let import_id_clone = import_id.clone();
                         let organization_id = organization_id.clone();
+                        let progress_callback = progress_callback.clone();
+
                         into_future_trait(
                             bf.request_with_body(
                                 route!(
@@ -859,19 +1051,21 @@ impl Blackfynn {
                                     organization_id,
                                     import_id
                                 ),
-                                hyper::Method::POST,
+                                Method::POST,
                                 params!(
                                     "filename" => file.file_name().to_string(),
                                     "multipartId" => multipart_upload_id.to_string(),
                                     "chunkChecksum" => file_chunk.checksum.0,
                                     "chunkNumber" => file_chunk.chunk_number.to_string()
                                 ),
-                                hyper::Body::from(file_chunk.bytes),
+                                file_chunk.bytes,
                                 vec![],
+                                false,
                             )
                             .and_then(
                                 move |response: response::UploadResponse| {
                                     if response.success {
+                                        progress_callback.on_update(&progress_update.clone());
                                         future::ok(import_id_clone)
                                     } else {
                                         future::err(Error::upload_error(
@@ -984,9 +1178,6 @@ impl Blackfynn {
         };
 
         let retry_loop = future::loop_fn(ld, |mut ld| {
-            let max_retries = 10;
-            let delay_millis_multiplier = 100;
-
             let mut ld_err = ld.clone();
 
             ld.bf
@@ -996,7 +1187,7 @@ impl Blackfynn {
                     ld.failed = false;
                     ld
                 })
-                .and_then(|mut ld| {
+                .and_then(|ld| {
                     ld.bf
                         .upload_file_chunks_to_upload_service(
                             &ld.organization_id,
@@ -1008,20 +1199,17 @@ impl Blackfynn {
                             ld.parallelism,
                         )
                         .collect()
-                        .map(|successful_result| {
-                            ld.result = Some(successful_result);
-                            future::Loop::Break(ld)
-                        })
+                        .map(future::Loop::Break)
                 })
                 .into_future()
                 .or_else(move |err| {
-                    if max_retries > ld_err.try_num {
+                    if MAX_RETRIES > ld_err.try_num {
                         if ld_err.failed {
                             ld_err.try_num += 1;
                         } else {
                             ld_err.try_num = 1;
                         }
-                        let delay = delay_millis_multiplier * ld_err.try_num * ld_err.try_num;
+                        let delay = retry_delay(ld_err.try_num);
 
                         ld_err.failed = true;
 
@@ -1029,36 +1217,31 @@ impl Blackfynn {
                         debug!("Waiting {millis} millis to retry...", millis = delay);
 
                         // delay
-                        let deadline = time::Instant::now() + time::Duration::from_millis(delay as u64);
+                        let deadline = time::Instant::now() + time::Duration::from_millis(delay);
                         let continue_loop = tokio::timer::Delay::new(deadline)
-                            .map_err(Into::into)
+                            .map_err(Into::<Error>::into)
                             .map(move |_| {
                                 debug!(
                                     "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
-                                    try_num = ld_err.try_num, retries = max_retries
+                                    try_num = ld_err.try_num, retries = MAX_RETRIES
                                 );
                                 future::Loop::Continue(ld_err)
                             });
                         into_future_trait(continue_loop)
                     } else {
-                        into_future_trait(future::ok::<future::Loop<LoopDependencies<C>, LoopDependencies<C>>, Error>(
-                            future::Loop::Break(ld_err),
-                        ))
+                        into_future_trait(future::err(ErrorKind::RetriesExceeded.into()))
                     }
                 })
         })
-        .map(|ld| {
-            match ld.result {
-                Some(import_ids) => future::ok::<Stream<ImportId>, Error>(
-                    into_stream_trait(stream::futures_unordered(
-                        import_ids
-                            .iter()
-                            .map(|import_id| future::ok(import_id.clone())),
-                    )),
-                )
-                .into_stream(),
-                None => future::err(ErrorKind::RetriesExceeded.into()).into_stream(),
-            }
+        .map(|import_ids| {
+            future::ok::<Stream<ImportId>, Error>(
+                into_stream_trait(stream::futures_unordered(
+                    import_ids
+                        .iter()
+                        .map(|import_id| future::ok(import_id.clone())),
+                )),
+            )
+                .into_stream()
             .flatten()
         })
         .into_stream()
@@ -1509,6 +1692,72 @@ pub mod tests {
     }
 
     #[test]
+    fn fetch_dataset_user_collaborators() {
+        let collaborators = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_user_collaborators(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+
+        assert!(collaborators.iter().all(|c| c.role().is_some()));
+
+        let mut collaborators: Vec<(String, String)> = collaborators
+            .iter()
+            .map(|u| (u.first_name().clone(), u.role().unwrap().clone()))
+            .collect();
+        collaborators.sort();
+
+        let expected = vec![
+            ("Agent".to_string(), "owner".to_string()),
+            ("Matt".to_string(), "manager".to_string()),
+            ("Michael".to_string(), "manager".to_string()),
+            ("Peter".to_string(), "manager".to_string()),
+        ];
+
+        assert_eq!(collaborators, expected);
+    }
+
+    #[test]
+    fn fetch_dataset_team_collaborators() {
+        let collaborators = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_team_collaborators(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+        assert!(collaborators.iter().all(|c| c.role().is_some()));
+
+        let mut collaborators: Vec<(String, String)> = collaborators
+            .iter()
+            .map(|t| (t.name().clone(), t.role().unwrap().clone()))
+            .collect();
+        collaborators.sort();
+
+        let expected = vec![("Matt's Team".to_string(), "editor".to_string())];
+
+        assert_eq!(collaborators, expected);
+    }
+
+    #[test]
+    fn fetch_dataset_organization_role() {
+        let organization_role = run(&bf(), move |bf| {
+            into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                bf.get_dataset_organization_role(DatasetNodeId::new(FIXTURE_DATASET))
+            }))
+        })
+        .unwrap();
+
+        let organization_role = (
+            organization_role.name().clone(),
+            organization_role.role().cloned(),
+        );
+        let expected = ("Blackfynn".to_string(), Some("manager".to_string()));
+
+        assert_eq!(organization_role, expected);
+    }
+
+    #[test]
     fn fetch_members() {
         let members = run(&bf(), move |bf| {
             into_future_trait(
@@ -1598,8 +1847,13 @@ pub mod tests {
                     })
                     .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
                     .and_then(move |(bf, ds_id)| {
-                        bf.create_package(rand_suffix("$agent-test-package"), "Text", ds_id.clone())
-                            .map(|pkg| (bf, ds_id, pkg))
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|pkg| (bf, ds_id, pkg))
                     })
                     .and_then(move |(bf, ds_id, pkg)| {
                         let pkg_id = pkg.take().id().clone();
@@ -1635,6 +1889,66 @@ pub mod tests {
                 ErrorKind::ApiError { status_code, .. } => assert_eq!(status_code.as_u16(), 400),
                 _ => assert!(false),
             }
+        }
+    }
+
+    #[test]
+    fn move_package_to_toplevel() {
+        let result = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, ds_id)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-collection"),
+                            "Collection",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|col| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            Some(col.id().clone()),
+                        )
+                        .map(|pkg| (bf, ds_id, pkg, col))
+                    })
+                    .and_then(move |(bf, ds_id, pkg, col)| {
+                        // Move package to top-level of dataset
+                        bf.mv(vec![pkg.take().id().clone()], None as Option<PackageId>)
+                            .map(|_| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_dataset_by_id(ds_id.clone()).and_then(|dataset| {
+                            // Dataset now has two children ($agent-test-collection and $agent-test-package)
+                            assert_eq!(dataset.children().unwrap().len(), 2);
+                            Ok((bf, ds_id, col))
+                        })
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_package_by_id(col.id().clone())
+                            .and_then(|collection| {
+                                // Collection now has no children
+                                assert_eq!(collection.children().unwrap().len(), 0);
+                                Ok((bf, ds_id))
+                            })
+                    })
+                    .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().to_string());
         }
     }
 
@@ -1682,15 +1996,15 @@ pub mod tests {
                         .login(TEST_API_KEY, TEST_SECRET_KEY)
                         .and_then(move |_| bf_clone.get_package_by_id(package.id().clone()));
                     into_future_trait(f)
-                }).unwrap();
+                })
+                .unwrap();
                 if current_package.state().unwrap().clone() == "UPLOADED".to_string() {
                     let result = run(&bf(), |bf| {
                         let bf_clone = bf.clone();
                         let current_package_clone = current_package.clone();
-                        let f =
-                            bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                                bf_clone.process_package(current_package_clone.id().clone())
-                            });
+                        let f = bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                            bf_clone.process_package(current_package_clone.id().clone())
+                        });
                         into_future_trait(f)
                     });
                     if let Err(err) = result {
@@ -1714,6 +2028,66 @@ pub mod tests {
             into_future_trait(f)
         })
         .unwrap();
+    }
+
+    #[test]
+    fn move_package_to_collection() {
+        let result = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| {
+                        bf.create_dataset(
+                            rand_suffix("$agent-test-dataset".to_string()),
+                            Some("A test dataset created by the agent".to_string()),
+                        )
+                        .map(|ds| (bf, ds))
+                    })
+                    .and_then(move |(bf, ds)| Ok(ds.id().clone()).map(|id| (bf, id)))
+                    .and_then(move |(bf, ds_id)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-collection"),
+                            "Collection",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|col| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.create_package(
+                            rand_suffix("$agent-test-package"),
+                            "Text",
+                            ds_id.clone(),
+                            None as Option<String>,
+                        )
+                        .map(|pkg| (bf, ds_id, pkg, col))
+                    })
+                    .and_then(move |(bf, ds_id, pkg, col)| {
+                        // Move package into $agent-test-collection
+                        bf.mv(vec![pkg.take().id().clone()], Some(col.id().clone()))
+                            .map(|_| (bf, ds_id, col))
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_dataset_by_id(ds_id.clone()).and_then(|dataset| {
+                            // Dataset now has one child
+                            assert_eq!(dataset.children().unwrap().len(), 1);
+                            Ok((bf, ds_id, col))
+                        })
+                    })
+                    .and_then(move |(bf, ds_id, col)| {
+                        bf.get_package_by_id(col.id().clone())
+                            .and_then(|collection| {
+                                // Collection now has one child
+                                assert_eq!(collection.children().unwrap().len(), 1);
+                                Ok((bf, ds_id))
+                            })
+                    })
+                    .and_then(move |(bf, ds_id)| bf.delete_dataset(ds_id)),
+            )
+        });
+
+        if result.is_err() {
+            panic!("{}", result.unwrap_err().to_string());
+        }
     }
 
     #[test]
@@ -1951,7 +2325,7 @@ pub mod tests {
                                 let p = path.to_path_buf();
                                 if !done.borrow().contains(&p) {
                                     println!("{:?} => {}%", p, update.percent_done());
-                                    if update.completed() {
+                                    if update.percent_done() >= 100.0 {
                                         done.borrow_mut().insert(p);
                                     }
                                 }
@@ -2084,10 +2458,7 @@ pub mod tests {
                     let package = package.clone();
 
                     let head_file: PathBuf = files_clone[0].1.clone().into();
-                    let file_path = head_file.parent()
-                        .unwrap()
-                        .canonicalize()
-                        .unwrap();
+                    let file_path = head_file.parent().unwrap().canonicalize().unwrap();
 
                     let progress_indicator = ProgressIndicator::new();
 
@@ -2344,7 +2715,12 @@ pub mod tests {
 
     #[test]
     fn upload_to_upload_service_with_retries() {
-        let file_paths: Vec<String> = MEDIUM_TEST_FILES.iter().map(|file_name| format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()).collect();
+        let file_paths: Vec<String> = MEDIUM_TEST_FILES
+            .iter()
+            .map(|file_name| {
+                format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()
+            })
+            .collect();
         let enumerated_files = add_upload_ids(&file_paths);
         // create upload
         let result = upload_to_upload_service_with_delete(enumerated_files);

@@ -94,3 +94,26 @@ impl IntoIterator for Organizations {
         self.organizations.into_iter()
     }
 }
+
+/// An organization role.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationRole {
+    id: String,
+    name: String,
+    role: Option<String>,
+}
+
+impl OrganizationRole {
+    pub fn id(&self) -> &String {
+        &self.id
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn role(&self) -> Option<&String> {
+        self.role.as_ref()
+    }
+}

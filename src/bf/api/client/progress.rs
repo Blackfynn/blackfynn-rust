@@ -46,6 +46,7 @@ pub struct ProgressUpdate {
     file_path: PathBuf,
     bytes_sent: u64,
     size: u64,
+    done: bool,
 }
 
 impl ProgressUpdate {
@@ -55,6 +56,7 @@ impl ProgressUpdate {
         file_path: PathBuf,
         bytes_sent: u64,
         size: u64,
+        done: bool,
     ) -> Self {
         Self {
             part_number,
@@ -62,6 +64,7 @@ impl ProgressUpdate {
             file_path,
             bytes_sent,
             size,
+            done,
         }
     }
 
@@ -90,6 +93,11 @@ impl ProgressUpdate {
         self.size
     }
 
+    /// Tests if the update represents completion of the file.
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
     /// Returns the upload percentage completed.
     pub fn percent_done(&self) -> f32 {
         // when uploading an empty (0 byte) file, we send up a single
@@ -105,10 +113,5 @@ impl ProgressUpdate {
         }
 
         (self.bytes_sent as f32 / self.size as f32) * 100.0
-    }
-
-    /// Tests if the file completed uploading.
-    pub fn completed(&self) -> bool {
-        self.percent_done() >= 100.0
     }
 }
