@@ -145,7 +145,7 @@ impl Stream for ChunkedFilePayload {
                     FileChunk {
                         bytes: vec![],
                         checksum: Checksum(String::from(EMPTY_SHA256_HASH)),
-                        chunk_number: self.parts_sent,
+                        chunk_number: 0,
                     },
                     self.build_progress_update(true),
                 ))))
