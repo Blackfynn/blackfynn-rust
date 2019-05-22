@@ -1268,6 +1268,7 @@ pub mod tests {
     use std::{cell, fs, path, result, sync, thread, time};
 
     use lazy_static::lazy_static;
+    use serial_test_derive::serial;
 
     use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
@@ -1962,6 +1963,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn process_package_succeeds() {
         let file_name = "test-tiny";
         let file_paths = vec![format!("{}/{}.png", TEST_DATA_DIR.to_string(), file_name)];
@@ -2172,6 +2174,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn simple_file_uploading() {
         let result = run(&bf(), move |bf| {
             let f =
@@ -2234,6 +2237,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn multipart_file_uploading() {
         let result =
             run(&bf(), move |bf| {
@@ -2306,6 +2310,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn multipart_big_file_uploading() {
         let cb = ProgressIndicator::new();
 
@@ -2500,6 +2505,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn upload_using_upload_service() {
         // create upload
         let result = run(&bf(), move |bf| {
@@ -2596,6 +2602,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn upload_missing_parts_using_upload_service() {
         // create upload
         let result = run(&bf(), move |bf| {
@@ -2723,6 +2730,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn upload_to_upload_service_with_retries() {
         let file_paths: Vec<String> = MEDIUM_TEST_FILES
             .iter()
@@ -2742,6 +2750,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial(upload)]
     fn upload_directory() {
         // preview upload and verify that it contains previewPath
         let result = run(&bf(), move |bf| {
