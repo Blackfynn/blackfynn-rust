@@ -591,9 +591,9 @@ impl Blackfynn {
         description: Option<D>,
         automatically_process_packages: bool,
     ) -> Future<response::Dataset> {
-        let paylaod =
+        let payload =
             request::dataset::Create::new(name, description, automatically_process_packages);
-        post!(self, "/datasets/", params!(), payload!(paylaod))
+        post!(self, "/datasets/", params!(), payload!(payload))
     }
 
     /// Create a new dataset with some request parameter defaults.
