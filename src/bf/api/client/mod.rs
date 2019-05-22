@@ -1389,6 +1389,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn login_successfully_locally() {
         let bf = bf();
         let result = run(&bf, move |bf| bf.login(TEST_API_KEY, TEST_SECRET_KEY));
@@ -1397,6 +1398,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn login_fails_locally() {
         let bf = bf();
         let result = run(&bf, move |bf| {
@@ -1407,6 +1409,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_organizations_after_login_is_successful() {
         let org = run(&bf(), move |bf| {
             into_future_trait(
@@ -1421,6 +1424,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_user_after_login_is_successful() {
         let user = run(&bf(), move |bf| {
             into_future_trait(
@@ -1435,6 +1439,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn updating_org_after_login_is_successful() {
         let user = run(&bf(), move |bf| {
             into_future_trait(
@@ -1454,6 +1459,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_organizations_fails_if_login_fails() {
         let org = run(&bf(), move |bf| {
             into_future_trait(
@@ -1466,6 +1472,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_organization_by_id_is_successful() {
         let org = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
@@ -1479,6 +1486,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_datasets_after_login_is_successful() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1493,12 +1501,14 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_datasets_fails_if_login_fails() {
         let ds = run(&bf(), move |bf| into_future_trait(bf.get_datasets()));
         assert!(ds.is_err());
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_by_id_successful_if_logged_in_and_exists() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1513,6 +1523,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_by_name_successful_if_logged_in_and_exists() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1527,6 +1538,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_generic_works_with_name() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1541,6 +1553,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_generic_works_with_id() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1555,6 +1568,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_id() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1574,6 +1588,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_id() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1593,6 +1608,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_child_dataset_by_id_is_successful_can_contains_child_packages_if_found_by_name() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1612,6 +1628,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_child_dataset_by_name_is_successful_can_contains_child_packages_if_found_by_name() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1631,6 +1648,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_child_dataset_fails_if_it_does_not_exists() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1647,6 +1665,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_by_name_fails_if_it_does_not_exist() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(
@@ -1659,6 +1678,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_package_by_id_successful_if_logged_in_and_exists() {
         let package = run(&bf(), move |bf| {
             into_future_trait(
@@ -1672,6 +1692,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_package_by_id_invalid_if_logged_in_and_exists() {
         let package = run(&bf(), move |bf| {
             into_future_trait(
@@ -1690,6 +1711,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_dataset_by_id_fails_if_logged_in_but_doesnt_exists() {
         let ds = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
@@ -1702,6 +1724,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetch_dataset_user_collaborators() {
         let collaborators = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
@@ -1729,6 +1752,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetch_dataset_team_collaborators() {
         let collaborators = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
@@ -1750,6 +1774,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetch_dataset_organization_role() {
         let organization_role = run(&bf(), move |bf| {
             into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
@@ -1768,6 +1793,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetch_members() {
         let members = run(&bf(), move |bf| {
             into_future_trait(
@@ -1784,6 +1810,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetch_teams() {
         let teams = run(&bf(), move |bf| {
             into_future_trait(
@@ -1800,6 +1827,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn creating_then_updating_then_delete_dataset_successful() {
         let new_dataset_name = rand_suffix("$new-test-dataset".to_string());
         let result = run(&bf(), move |bf| {
@@ -1844,6 +1872,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn creating_then_updating_then_delete_package_successful() {
         let result = run(&bf(), move |bf| {
             into_future_trait(
@@ -1886,6 +1915,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn process_package_failed() {
         let resp = run(&bf(), move |bf| {
             into_future_trait(
@@ -1903,6 +1933,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn move_package_to_toplevel() {
         let result = run(&bf(), move |bf| {
             into_future_trait(
@@ -1963,7 +1994,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn process_package_succeeds() {
         let file_name = "test-tiny";
         let file_paths = vec![format!("{}/{}.png", TEST_DATA_DIR.to_string(), file_name)];
@@ -2042,6 +2073,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn move_package_to_collection() {
         let result = run(&bf(), move |bf| {
             into_future_trait(
@@ -2102,6 +2134,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn fetching_upload_credential_granting_works() {
         let cred = run(&bf(), move |bf| {
             into_future_trait(
@@ -2115,6 +2148,7 @@ pub mod tests {
     }
 
     #[test]
+    #[serial]
     fn preview_upload_file_working() {
         let preview =
             run(&bf(), move |bf| {
@@ -2174,7 +2208,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn simple_file_uploading() {
         let result = run(&bf(), move |bf| {
             let f =
@@ -2237,7 +2271,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn multipart_file_uploading() {
         let result =
             run(&bf(), move |bf| {
@@ -2310,7 +2344,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn multipart_big_file_uploading() {
         let cb = ProgressIndicator::new();
 
@@ -2505,7 +2539,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn upload_using_upload_service() {
         // create upload
         let result = run(&bf(), move |bf| {
@@ -2602,7 +2636,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn upload_missing_parts_using_upload_service() {
         // create upload
         let result = run(&bf(), move |bf| {
@@ -2730,7 +2764,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn upload_to_upload_service_with_retries() {
         let file_paths: Vec<String> = MEDIUM_TEST_FILES
             .iter()
@@ -2750,7 +2784,7 @@ pub mod tests {
     }
 
     #[test]
-    #[serial(upload)]
+    #[serial]
     fn upload_directory() {
         // preview upload and verify that it contains previewPath
         let result = run(&bf(), move |bf| {
@@ -2797,7 +2831,7 @@ pub mod tests {
 
                     let upload_futures = preview.into_iter().map(move |package| {
                         let package_copy = package.clone();
-                        // perview path should be expected uploaded directory
+                        // preview path should be expected uploaded directory
                         assert_eq!(package.preview_path(), Some("medium".to_string()));
 
                         let import_id = package_copy.import_id().clone();
