@@ -408,8 +408,19 @@ impl Blackfynn {
             into_future_trait(f)
         };
 
-        // Finally, attempt to parse the JSON response into a typeful representation:
-        let json = response.and_then(|body| serde_json::from_slice(&body).map_err(Into::into));
+        // Finally, attempt to parse the JSON response into a typeful
+        // representation. serde_json::from_slice will fail if the
+        // response body is empty, so we need to convert the empty
+        // body into a valid "null" json string in that case.
+        let json = response.and_then(|chunk| {
+            let bytes = chunk.into_bytes();
+            let bytes = if bytes.len() == 0 {
+                b"null"[..].into()
+            } else {
+                bytes
+            };
+            serde_json::from_slice(&bytes).map_err(Into::into)
+        });
 
         into_future_trait(json)
     }
@@ -749,7 +760,7 @@ impl Blackfynn {
 
     /// Process a package in the UPLOADED state.
     pub fn process_package(&self, id: PackageId) -> Future<()> {
-        let f = put!(self, route!("/packages/{id}/process", id)).map(|_: Nothing| ());
+        let f = put!(self, route!("/packages/{id}/process", id)).map(|resp: Nothing| ());
         into_future_trait(f)
     }
 
@@ -1358,7 +1369,7 @@ pub mod tests {
     fn test_data_files(data_dir: &str) -> Vec<String> {
         match fs::read_dir(test_data_dir(data_dir)) {
             Ok(entries) => entries
-                .map(|entry| entry.unwrap().file_name().into_string())
+                .map(|entry| entry.unwrap().file_name().into_string().clone())
                 .collect::<result::Result<Vec<_>, _>>()
                 .unwrap(),
             Err(e) => {
@@ -1984,7 +1995,7 @@ pub mod tests {
 
         let now = std::time::SystemTime::now();
         let sleep_duration = std::time::Duration::new(5, 0); // 5 seconds
-        let timeout_duration = std::time::Duration::new(60, 0); // 60 seconds
+        let timeout_duration = std::time::Duration::new(120, 0); // 2 minutes
         'infinite: loop {
             if now.elapsed().unwrap() < timeout_duration {
                 let current_package = run(&bf(), |bf| {
