@@ -240,7 +240,6 @@ impl Blackfynn {
     /// * `params` - Query params to include in the request
     /// * `payload` - A json-serializable payload to send to the platform
     ///       along with the request
-    /// ```
     fn request<I, P, Q, S>(
         &self,
         route: S,
@@ -299,7 +298,6 @@ impl Blackfynn {
     /// * `body` - A byte array payload
     /// * `additional_headers` - Additional headers to include
     /// * `retry_on_failure` - Whether to retry the request on failure
-    /// ```
     fn request_with_body<I, Q, S>(
         &self,
         route: S,
@@ -437,7 +435,6 @@ impl Blackfynn {
     /// * `method` - The HTTP method
     /// * `body` - A byte array payload
     /// * `additional_headers` - Additional headers to include
-    /// ```
     fn single_request(
         &self,
         route: String,
