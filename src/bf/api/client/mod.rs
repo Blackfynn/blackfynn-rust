@@ -760,7 +760,7 @@ impl Blackfynn {
 
     /// Process a package in the UPLOADED state.
     pub fn process_package(&self, id: PackageId) -> Future<()> {
-        let f = put!(self, route!("/packages/{id}/process", id)).map(|resp: Nothing| ());
+        let f = put!(self, route!("/packages/{id}/process", id)).map(|_: Nothing| ());
         into_future_trait(f)
     }
 
