@@ -10,7 +10,7 @@ pub struct Create {
 }
 
 impl Create {
-    pub fn new<P, Q>(name: P, description: Option<Q>, automatically_process_packages: bool) -> Self
+    pub fn new<P, Q>(name: P, description: Option<Q>) -> Self
     where
         P: Into<String>,
         Q: Into<String>,
@@ -18,8 +18,16 @@ impl Create {
         Self {
             name: name.into(),
             description: description.map(Into::into),
-            automatically_process_packages,
+            automatically_process_packages: false,
         }
+    }
+
+    pub fn with_automatically_process_packages(
+        mut self,
+        automatically_process_packages: bool,
+    ) -> Self {
+        self.automatically_process_packages = automatically_process_packages;
+        self
     }
 }
 
