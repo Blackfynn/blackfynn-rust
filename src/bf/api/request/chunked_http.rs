@@ -102,7 +102,7 @@ impl ChunkedFilePayload {
             None => (0, 0, None),
         };
 
-        let payload = Self {
+        Self {
             import_id,
             file_path,
             file,
@@ -112,9 +112,7 @@ impl ChunkedFilePayload {
             parts_sent,
             expected_total_parts,
             missing_parts: sorted_missing_parts,
-        };
-
-        payload
+        }
     }
 
     fn build_progress_update(&self, done: bool) -> ProgressUpdate {
@@ -138,7 +136,7 @@ impl Stream for ChunkedFilePayload {
     type Error = io::Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        let chunk = if self.file_size == 0 {
+        if self.file_size == 0 {
             // When the file size is 0, our iterator just needs to
             // send a single element with an empty buffer
             if self.parts_sent == 0 {
@@ -204,8 +202,7 @@ impl Stream for ChunkedFilePayload {
                         Ready(None)
                     }
                 })
-        };
-        chunk
+        }
     }
 }
 

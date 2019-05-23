@@ -82,7 +82,7 @@ pub struct Package {
     id: PackageId,
     name: String,
     dataset_id: model::DatasetNodeId,
-    package_state: Option<String>,
+    state: Option<String>,
     package_type: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -116,8 +116,8 @@ impl Package {
     }
 
     #[allow(dead_code)]
-    pub fn package_state(&self) -> Option<&String> {
-        self.package_state.as_ref()
+    pub fn state(&self) -> Option<&String> {
+        self.state.as_ref()
     }
 
     #[allow(dead_code)]

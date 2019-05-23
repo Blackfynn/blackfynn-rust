@@ -240,7 +240,6 @@ impl Blackfynn {
     /// * `params` - Query params to include in the request
     /// * `payload` - A json-serializable payload to send to the platform
     ///       along with the request
-    /// ```
     fn request<I, P, Q, S>(
         &self,
         route: S,
@@ -299,7 +298,6 @@ impl Blackfynn {
     /// * `body` - A byte array payload
     /// * `additional_headers` - Additional headers to include
     /// * `retry_on_failure` - Whether to retry the request on failure
-    /// ```
     fn request_with_body<I, Q, S>(
         &self,
         route: S,
@@ -408,8 +406,19 @@ impl Blackfynn {
             into_future_trait(f)
         };
 
-        // Finally, attempt to parse the JSON response into a typeful representation:
-        let json = response.and_then(|body| serde_json::from_slice(&body).map_err(Into::into));
+        // Finally, attempt to parse the JSON response into a typeful
+        // representation. serde_json::from_slice will fail if the
+        // response body is empty, so we need to convert the empty
+        // body into a valid "null" json string in that case.
+        let json = response.and_then(|chunk| {
+            let bytes = chunk.into_bytes();
+            let bytes = if bytes.len() == 0 {
+                b"null"[..].into()
+            } else {
+                bytes
+            };
+            serde_json::from_slice(&bytes).map_err(Into::into)
+        });
 
         into_future_trait(json)
     }
@@ -426,7 +435,6 @@ impl Blackfynn {
     /// * `method` - The HTTP method
     /// * `body` - A byte array payload
     /// * `additional_headers` - Additional headers to include
-    /// ```
     fn single_request(
         &self,
         route: String,
@@ -584,18 +592,21 @@ impl Blackfynn {
         get!(self, "/datasets/")
     }
 
-    /// Create a new dataset.
+    /// Create a new dataset using full request object.
+    pub fn create_dataset_with_request(
+        &self,
+        request: request::dataset::Create,
+    ) -> Future<response::Dataset> {
+        post!(self, "/datasets/", params!(), payload!(request))
+    }
+
+    /// Create a new dataset with some request parameter defaults.
     pub fn create_dataset<N: Into<String>, D: Into<String>>(
         &self,
         name: N,
         description: Option<D>,
     ) -> Future<response::Dataset> {
-        post!(
-            self,
-            "/datasets/",
-            params!(),
-            payload!(request::dataset::Create::new(name, description))
-        )
+        self.create_dataset_with_request(request::dataset::Create::new(name, description))
     }
 
     /// Get a specific dataset by its ID.
@@ -738,6 +749,12 @@ impl Blackfynn {
             params!(),
             payload!(request::package::Update::new(name))
         )
+    }
+
+    /// Process a package in the UPLOADED state.
+    pub fn process_package(&self, id: PackageId) -> Future<()> {
+        let f = put!(self, route!("/packages/{id}/process", id)).map(|_: Nothing| ());
+        into_future_trait(f)
     }
 
     /// Move several packages to a destination package.
@@ -1345,7 +1362,7 @@ pub mod tests {
     fn test_data_files(data_dir: &str) -> Vec<String> {
         match fs::read_dir(test_data_dir(data_dir)) {
             Ok(entries) => entries
-                .map(|entry| entry.unwrap().file_name().into_string())
+                .map(|entry| entry.unwrap().file_name().into_string().clone())
                 .collect::<result::Result<Vec<_>, _>>()
                 .unwrap(),
             Err(e) => {
@@ -1861,6 +1878,23 @@ pub mod tests {
     }
 
     #[test]
+    fn process_package_failed() {
+        let resp = run(&bf(), move |bf| {
+            into_future_trait(
+                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
+                    .and_then(move |_| bf.process_package(PackageId::new(FIXTURE_PACKAGE))),
+            )
+        });
+
+        if let Err(e) = resp {
+            match e.kind() {
+                ErrorKind::ApiError { status_code, .. } => assert_eq!(status_code.as_u16(), 400),
+                _ => assert!(false),
+            }
+        }
+    }
+
+    #[test]
     fn move_package_to_toplevel() {
         let result = run(&bf(), move |bf| {
             into_future_trait(
@@ -1918,6 +1952,84 @@ pub mod tests {
         if result.is_err() {
             panic!("{}", result.unwrap_err().to_string());
         }
+    }
+
+    #[test]
+    fn process_package_succeeds() {
+        let file_name = "test-tiny";
+        let file_paths = vec![format!("{}/{}.png", TEST_DATA_DIR.to_string(), file_name)];
+        let enumerated_files = add_upload_ids(&file_paths);
+        // create upload
+        let result = run(&bf(), |bf| {
+            upload_to_upload_service(bf, enumerated_files.clone())
+        });
+
+        let (_, dataset_id) = match result {
+            Ok(results) => results,
+            Err(err) => {
+                println!("{}", err.to_string());
+                panic!();
+            }
+        };
+        let package = run(&bf(), |bf| {
+            let bf_clone = bf.clone();
+            let dataset_id_clone = dataset_id.clone();
+            let f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| bf_clone.clone().get_dataset_by_id(dataset_id_clone))
+                .map(move |ds| {
+                    let file_name_clone = file_name.clone();
+                    ds.get_package_by_name(file_name_clone)
+                });
+            into_future_trait(f)
+        })
+        .unwrap()
+        .unwrap();
+
+        let now = std::time::SystemTime::now();
+        let sleep_duration = std::time::Duration::new(5, 0); // 5 seconds
+        let timeout_duration = std::time::Duration::new(120, 0); // 2 minutes
+        'infinite: loop {
+            if now.elapsed().unwrap() < timeout_duration {
+                let current_package = run(&bf(), |bf| {
+                    let bf_clone = bf.clone();
+                    let package = package.clone();
+                    let f = bf
+                        .login(TEST_API_KEY, TEST_SECRET_KEY)
+                        .and_then(move |_| bf_clone.get_package_by_id(package.id().clone()));
+                    into_future_trait(f)
+                })
+                .unwrap();
+                if current_package.state().unwrap().clone() == "UPLOADED".to_string() {
+                    let result = run(&bf(), |bf| {
+                        let bf_clone = bf.clone();
+                        let current_package_clone = current_package.clone();
+                        let f = bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
+                            bf_clone.process_package(current_package_clone.id().clone())
+                        });
+                        into_future_trait(f)
+                    });
+                    if let Err(err) = result {
+                        println!("{}", err.to_string());
+                        panic!()
+                    }
+                    break 'infinite;
+                } else {
+                    thread::sleep(sleep_duration);
+                }
+            } else {
+                panic!()
+            }
+        }
+        run(&bf(), |bf| {
+            let bf_clone = bf.clone();
+            let dataset_id_clone = dataset_id.clone();
+            let f = bf
+                .login(TEST_API_KEY, TEST_SECRET_KEY)
+                .and_then(move |_| bf_clone.delete_dataset(dataset_id_clone));
+            into_future_trait(f)
+        })
+        .unwrap();
     }
 
     #[test]
@@ -2287,6 +2399,99 @@ pub mod tests {
         }
     }
 
+    fn upload_to_upload_service_with_delete(files: Vec<(UploadId, String)>) -> Result<()> {
+        run(&bf(), move |bf| {
+            let f = upload_to_upload_service(bf, files.clone())
+                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+
+            into_future_trait(f)
+        })
+    }
+
+    fn upload_to_upload_service(
+        bf: Blackfynn,
+        files: Vec<(UploadId, String)>,
+    ) -> Future<(Blackfynn, DatasetNodeId)> {
+        let files = files.clone();
+        let files_clone = files.clone();
+        let f = bf
+            .login(TEST_API_KEY, TEST_SECRET_KEY)
+            .and_then(move |_| {
+                bf.create_dataset(
+                    rand_suffix("$agent-test-dataset".to_string()),
+                    Some("A test dataset created by the agent".to_string()),
+                )
+                .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
+            })
+            .and_then(|(bf, dataset_id, dataset_int_id)| {
+                bf.get_user().map(|user| {
+                    (
+                        bf,
+                        dataset_id,
+                        user.preferred_organization().unwrap().clone(),
+                        dataset_int_id,
+                    )
+                })
+            })
+            .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
+                bf.preview_upload_using_upload_service(
+                    &organization_id.clone(),
+                    &dataset_int_id,
+                    Some((*MEDIUM_TEST_DATA_DIR).to_string()),
+                    &files,
+                    false,
+                    false,
+                )
+                .map(|preview| (bf, dataset_id, organization_id, preview))
+            })
+            .and_then(move |(bf, dataset_id, organization_id, preview)| {
+                let bf = bf.clone();
+                let bf_clone = bf.clone();
+                let dataset_id = dataset_id.clone();
+                let dataset_id_clone = dataset_id.clone();
+
+                let upload_futures = preview.into_iter().map(move |package| {
+                    let import_id = package.import_id().clone();
+                    let bf = bf.clone();
+                    let bf_clone = bf.clone();
+                    let organization_id = organization_id.clone();
+
+                    let dataset_id = dataset_id.clone();
+                    let package = package.clone();
+
+                    let head_file: PathBuf = files_clone[0].1.clone().into();
+                    let file_path = head_file.parent().unwrap().canonicalize().unwrap();
+
+                    let progress_indicator = ProgressIndicator::new();
+
+                    // upload using the retries function
+                    bf.upload_file_chunks_to_upload_service_retries(
+                        &organization_id,
+                        &import_id,
+                        &file_path,
+                        package.files().to_vec(),
+                        progress_indicator.clone(),
+                        1,
+                    )
+                    .collect()
+                    .map(|_| (bf_clone, dataset_id))
+                    .and_then(move |(bf, dataset_id)| {
+                        bf.complete_upload_using_upload_service(
+                            &organization_id,
+                            &import_id,
+                            &dataset_id,
+                            None,
+                            false,
+                        )
+                    })
+                });
+
+                futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+            });
+
+        into_future_trait(f)
+    }
+
     #[test]
     fn upload_using_upload_service() {
         // create upload
@@ -2512,89 +2717,15 @@ pub mod tests {
 
     #[test]
     fn upload_to_upload_service_with_retries() {
+        let file_paths: Vec<String> = MEDIUM_TEST_FILES
+            .iter()
+            .map(|file_name| {
+                format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()
+            })
+            .collect();
+        let enumerated_files = add_upload_ids(&file_paths);
         // create upload
-        let result = run(&bf(), move |bf| {
-            let f = bf
-                .login(TEST_API_KEY, TEST_SECRET_KEY)
-                .and_then(move |_| {
-                    bf.create_dataset(
-                        rand_suffix("$agent-test-dataset".to_string()),
-                        Some("A test dataset created by the agent".to_string()),
-                    )
-                    .map(move |ds| (bf, ds.id().clone(), ds.int_id().clone()))
-                })
-                .and_then(|(bf, dataset_id, dataset_int_id)| {
-                    bf.get_user().map(|user| {
-                        (
-                            bf,
-                            dataset_id,
-                            user.preferred_organization().unwrap().clone(),
-                            dataset_int_id,
-                        )
-                    })
-                })
-                .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
-                    let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
-                    bf.preview_upload_using_upload_service(
-                        &organization_id.clone(),
-                        &dataset_int_id,
-                        Some((*MEDIUM_TEST_DATA_DIR).to_string()),
-                        &enumerated_files,
-                        false,
-                        false,
-                    )
-                    .map(|preview| (bf, dataset_id, organization_id, preview))
-                })
-                .and_then(move |(bf, dataset_id, organization_id, preview)| {
-                    let bf = bf.clone();
-                    let bf_clone = bf.clone();
-                    let dataset_id = dataset_id.clone();
-                    let dataset_id_clone = dataset_id.clone();
-
-                    let upload_futures = preview.into_iter().map(move |package| {
-                        let import_id = package.import_id().clone();
-                        let bf = bf.clone();
-                        let bf_clone = bf.clone();
-                        let organization_id = organization_id.clone();
-
-                        let dataset_id = dataset_id.clone();
-                        let package = package.clone();
-
-                        let file_path = path::Path::new(&MEDIUM_TEST_DATA_DIR.to_string())
-                            .to_path_buf()
-                            .canonicalize()
-                            .unwrap();
-
-                        let progress_indicator = ProgressIndicator::new();
-
-                        // upload using the retries function
-                        bf.upload_file_chunks_to_upload_service_retries(
-                            &organization_id,
-                            &import_id,
-                            &file_path,
-                            package.files().to_vec(),
-                            progress_indicator.clone(),
-                            1,
-                        )
-                        .collect()
-                        .map(|_| (bf_clone, dataset_id))
-                        .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
-                                &organization_id,
-                                &import_id,
-                                &dataset_id,
-                                None,
-                                false,
-                            )
-                        })
-                    });
-
-                    futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
-                })
-                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
-
-            into_future_trait(f)
-        });
+        let result = upload_to_upload_service_with_delete(enumerated_files);
 
         // check result
         if result.is_err() {

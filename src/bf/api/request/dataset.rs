@@ -6,6 +6,7 @@ use serde_derive::Serialize;
 pub struct Create {
     name: String,
     description: Option<String>,
+    automatically_process_packages: bool,
 }
 
 impl Create {
@@ -17,7 +18,16 @@ impl Create {
         Self {
             name: name.into(),
             description: description.map(Into::into),
+            automatically_process_packages: false,
         }
+    }
+
+    pub fn with_automatically_process_packages(
+        mut self,
+        automatically_process_packages: bool,
+    ) -> Self {
+        self.automatically_process_packages = automatically_process_packages;
+        self
     }
 }
 

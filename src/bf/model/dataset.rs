@@ -176,6 +176,7 @@ pub struct Dataset {
     // * Video
     package_type: Option<String>,
     status: DatasetStatus,
+    automatically_process_packages: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     int_id: DatasetId,
@@ -225,6 +226,11 @@ impl Dataset {
     #[allow(dead_code)]
     pub fn status(&self) -> &DatasetStatus {
         &self.status
+    }
+
+    #[allow(dead_code)]
+    pub fn automatically_process_packages(&self) -> &bool {
+        &self.automatically_process_packages
     }
 
     #[allow(dead_code)]
