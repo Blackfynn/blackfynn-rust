@@ -2821,9 +2821,6 @@ pub mod tests {
                 .result()
         };
 
-        println!("{}", upload_service_hash.hash);
-        println!("{:x}", expected_hash);
-
         assert!(upload_service_hash.hash == format!("{:x}", expected_hash))
     }
 
