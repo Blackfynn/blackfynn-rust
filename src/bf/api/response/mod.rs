@@ -30,5 +30,5 @@ pub use self::package::Package;
 pub use self::security::{TemporaryCredential, UploadCredential};
 pub use self::team::Team;
 pub use self::upload::{
-    FileMissingParts, FilesMissingParts, Manifests, UploadPreview, UploadResponse,
+    FileHash, FileMissingParts, FilesMissingParts, Manifests, UploadPreview, UploadResponse,
 };

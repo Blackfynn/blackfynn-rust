@@ -60,6 +60,12 @@ pub struct FilesMissingParts {
     pub files: Vec<FileMissingParts>,
 }
 
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHash {
+    pub hash: String,
+}
+
 /// A manifest of files uploaded to the Blackfynn platform.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifests(Vec<model::ManifestEntry>);

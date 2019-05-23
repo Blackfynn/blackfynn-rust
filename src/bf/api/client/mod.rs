@@ -1138,6 +1138,22 @@ impl Blackfynn {
         )
     }
 
+    /// Get the hash of an uploaded file from the upload service
+    pub fn get_upload_hash_using_upload_service<S>(
+        &self,
+        import_id: &ImportId,
+        file_name: S,
+    ) -> Future<response::FileHash>
+    where
+        S: Into<String>,
+    {
+        get!(
+            self,
+            route!("/upload/hash/id/{import_id}", import_id),
+            params!("fileName" => file_name)
+        )
+    }
+
     pub fn upload_file_chunks_to_upload_service_retries<P, C>(
         &self,
         organization_id: &OrganizationId,
@@ -1258,9 +1274,12 @@ pub mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::fmt::Debug;
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
     use std::{cell, fs, path, result, sync, thread, time};
 
     use lazy_static::lazy_static;
+    use sha2::{Digest, Sha256};
 
     use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
@@ -1964,7 +1983,7 @@ pub mod tests {
             upload_to_upload_service(bf, enumerated_files.clone())
         });
 
-        let (_, dataset_id) = match result {
+        let (_, dataset_id, _) = match result {
             Ok(results) => results,
             Err(err) => {
                 println!("{}", err.to_string());
@@ -2402,7 +2421,7 @@ pub mod tests {
     fn upload_to_upload_service_with_delete(files: Vec<(UploadId, String)>) -> Result<()> {
         run(&bf(), move |bf| {
             let f = upload_to_upload_service(bf, files.clone())
-                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                .and_then(move |(bf, dataset_id, _)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         })
@@ -2411,7 +2430,7 @@ pub mod tests {
     fn upload_to_upload_service(
         bf: Blackfynn,
         files: Vec<(UploadId, String)>,
-    ) -> Future<(Blackfynn, DatasetNodeId)> {
+    ) -> Future<(Blackfynn, DatasetNodeId, ImportId)> {
         let files = files.clone();
         let files_clone = files.clone();
         let f = bf
@@ -2483,10 +2502,12 @@ pub mod tests {
                             None,
                             false,
                         )
+                        .map(|_| import_id)
                     })
                 });
 
-                futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+                futures::future::join_all(upload_futures)
+                    .map(|import_ids| (bf_clone, dataset_id_clone, import_ids[0].clone()))
             });
 
         into_future_trait(f)
@@ -2732,6 +2753,78 @@ pub mod tests {
             println!("{}", result.unwrap_err().to_string());
             panic!();
         }
+    }
+
+    #[test]
+    fn upload_to_upload_service_and_check_hash() {
+        let file_paths: Vec<String> = MEDIUM_TEST_FILES
+            .iter()
+            .map(|file_name| {
+                format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()
+            })
+            .collect();
+        let test_file_path = file_paths[0].clone();
+        let test_file_name = test_file_path.split('/').last().unwrap().to_string();
+
+        let enumerated_test_file: Vec<(UploadId, String)> =
+            vec![(UploadId::new(0), test_file_path.clone())];
+
+        let result = run(&bf(), move |bf| {
+            let test_file_name = test_file_name.clone();
+
+            let f = upload_to_upload_service(bf, enumerated_test_file.clone()).and_then(
+                move |(bf, _, import_id)| {
+                    bf.get_upload_hash_using_upload_service(&import_id, test_file_name)
+                },
+            );
+            into_future_trait(f)
+        });
+
+        // check result
+        if result.is_err() {
+            println!("{}", result.unwrap_err().to_string());
+            panic!();
+        }
+
+        // compare expected hash
+        let upload_service_hash = result.unwrap();
+
+        let expected_hash = {
+            let chunk_size = 5_242_880;
+            let mut file = File::open(test_file_path.clone()).unwrap();
+
+            let mut chunk_hashes: Vec<String> = vec![];
+            let mut total_bytes_read: u64 = 0;
+
+            loop {
+                let mut buffer = vec![0; chunk_size];
+                let mut hasher = Sha256::new();
+
+                file.seek(SeekFrom::Start(total_bytes_read)).unwrap();
+                let bytes_read = file.read(&mut buffer).unwrap();
+                total_bytes_read += bytes_read as u64;
+
+                if bytes_read > 0 {
+                    hasher.input(&buffer);
+                    chunk_hashes.push(format!("{:x}", hasher.result()));
+                } else {
+                    break;
+                }
+            }
+
+            chunk_hashes
+                .into_iter()
+                .fold(Sha256::new(), |mut acc, hash| {
+                    acc.input(hash);
+                    acc
+                })
+                .result()
+        };
+
+        println!("{}", upload_service_hash.hash);
+        println!("{:x}", expected_hash);
+
+        assert!(upload_service_hash.hash == format!("{:x}", expected_hash))
     }
 
     #[test]
