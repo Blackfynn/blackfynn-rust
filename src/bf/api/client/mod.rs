@@ -592,16 +592,12 @@ impl Blackfynn {
         get!(self, "/datasets/")
     }
 
-    /// Create a new dataset using full request object parameters.
-    pub fn create_dataset_with_request<N: Into<String>, D: Into<String>>(
+    /// Create a new dataset using full request object.
+    pub fn create_dataset_with_request(
         &self,
-        name: N,
-        description: Option<D>,
-        automatically_process_packages: bool,
+        request: request::dataset::Create,
     ) -> Future<response::Dataset> {
-        let payload = request::dataset::Create::new(name, description)
-            .with_automatically_process_packages(automatically_process_packages);
-        post!(self, "/datasets/", params!(), payload!(payload))
+        post!(self, "/datasets/", params!(), payload!(request))
     }
 
     /// Create a new dataset with some request parameter defaults.
@@ -610,7 +606,7 @@ impl Blackfynn {
         name: N,
         description: Option<D>,
     ) -> Future<response::Dataset> {
-        self.create_dataset_with_request(name, description, false)
+        self.create_dataset_with_request(request::dataset::Create::new(name, description))
     }
 
     /// Get a specific dataset by its ID.
