@@ -412,7 +412,7 @@ impl Blackfynn {
         // body into a valid "null" json string in that case.
         let json = response.and_then(|chunk| {
             let bytes = chunk.into_bytes();
-            let bytes = if bytes.len() == 0 {
+            let bytes = if bytes.is_empty() {
                 b"null"[..].into()
             } else {
                 bytes
@@ -1135,6 +1135,22 @@ impl Blackfynn {
                 organization_id,
                 import_id
             )
+        )
+    }
+
+    /// Get the hash of an uploaded file from the upload service
+    pub fn get_upload_hash_using_upload_service<S>(
+        &self,
+        import_id: &ImportId,
+        file_name: S,
+    ) -> Future<response::FileHash>
+    where
+        S: Into<String>,
+    {
+        get!(
+            self,
+            route!("/upload/hash/id/{import_id}", import_id),
+            params!("fileName" => file_name)
         )
     }
 
@@ -1964,7 +1980,7 @@ pub mod tests {
             upload_to_upload_service(bf, enumerated_files.clone())
         });
 
-        let (_, dataset_id) = match result {
+        let (_, dataset_id, _) = match result {
             Ok(results) => results,
             Err(err) => {
                 println!("{}", err.to_string());
@@ -2402,7 +2418,7 @@ pub mod tests {
     fn upload_to_upload_service_with_delete(files: Vec<(UploadId, String)>) -> Result<()> {
         run(&bf(), move |bf| {
             let f = upload_to_upload_service(bf, files.clone())
-                .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
+                .and_then(move |(bf, dataset_id, _)| bf.delete_dataset(dataset_id));
 
             into_future_trait(f)
         })
@@ -2411,7 +2427,7 @@ pub mod tests {
     fn upload_to_upload_service(
         bf: Blackfynn,
         files: Vec<(UploadId, String)>,
-    ) -> Future<(Blackfynn, DatasetNodeId)> {
+    ) -> Future<(Blackfynn, DatasetNodeId, ImportId)> {
         let files = files.clone();
         let files_clone = files.clone();
         let f = bf
@@ -2483,10 +2499,12 @@ pub mod tests {
                             None,
                             false,
                         )
+                        .map(|_| import_id)
                     })
                 });
 
-                futures::future::join_all(upload_futures).map(|_| (bf_clone, dataset_id_clone))
+                futures::future::join_all(upload_futures)
+                    .map(|import_ids| (bf_clone, dataset_id_clone, import_ids[0].clone()))
             });
 
         into_future_trait(f)
@@ -2726,6 +2744,38 @@ pub mod tests {
         let enumerated_files = add_upload_ids(&file_paths);
         // create upload
         let result = upload_to_upload_service_with_delete(enumerated_files);
+
+        // check result
+        if result.is_err() {
+            println!("{}", result.unwrap_err().to_string());
+            panic!();
+        }
+    }
+
+    #[test]
+    fn upload_to_upload_service_and_get_hash() {
+        let file_paths: Vec<String> = MEDIUM_TEST_FILES
+            .iter()
+            .map(|file_name| {
+                format!("{}/{}", MEDIUM_TEST_DATA_DIR.to_string(), file_name).to_string()
+            })
+            .collect();
+        let test_file_path = file_paths[0].clone();
+        let test_file_name = test_file_path.split('/').last().unwrap().to_string();
+
+        let enumerated_test_file: Vec<(UploadId, String)> =
+            vec![(UploadId::new(0), test_file_path.clone())];
+
+        let result = run(&bf(), move |bf| {
+            let test_file_name = test_file_name.clone();
+
+            let f = upload_to_upload_service(bf, enumerated_test_file.clone()).and_then(
+                move |(bf, _, import_id)| {
+                    bf.get_upload_hash_using_upload_service(&import_id, test_file_name)
+                },
+            );
+            into_future_trait(f)
+        });
 
         // check result
         if result.is_err() {
