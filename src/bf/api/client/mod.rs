@@ -412,7 +412,7 @@ impl Blackfynn {
         // body into a valid "null" json string in that case.
         let json = response.and_then(|chunk| {
             let bytes = chunk.into_bytes();
-            let bytes = if bytes.len() == 0 {
+            let bytes = if bytes.is_empty() {
                 b"null"[..].into()
             } else {
                 bytes
@@ -1274,12 +1274,9 @@ pub mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::fmt::Debug;
-    use std::fs::File;
-    use std::io::{Read, Seek, SeekFrom};
     use std::{cell, fs, path, result, sync, thread, time};
 
     use lazy_static::lazy_static;
-    use sha2::{Digest, Sha256};
 
     use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
@@ -2756,7 +2753,7 @@ pub mod tests {
     }
 
     #[test]
-    fn upload_to_upload_service_and_check_hash() {
+    fn upload_to_upload_service_and_get_hash() {
         let file_paths: Vec<String> = MEDIUM_TEST_FILES
             .iter()
             .map(|file_name| {
@@ -2785,43 +2782,6 @@ pub mod tests {
             println!("{}", result.unwrap_err().to_string());
             panic!();
         }
-
-        // compare expected hash
-        let upload_service_hash = result.unwrap();
-
-        let expected_hash = {
-            let chunk_size = 5_242_880;
-            let mut file = File::open(test_file_path.clone()).unwrap();
-
-            let mut chunk_hashes: Vec<String> = vec![];
-            let mut total_bytes_read: u64 = 0;
-
-            loop {
-                let mut buffer = vec![0; chunk_size];
-                let mut hasher = Sha256::new();
-
-                file.seek(SeekFrom::Start(total_bytes_read)).unwrap();
-                let bytes_read = file.read(&mut buffer).unwrap();
-                total_bytes_read += bytes_read as u64;
-
-                if bytes_read > 0 {
-                    hasher.input(&buffer);
-                    chunk_hashes.push(format!("{:x}", hasher.result()));
-                } else {
-                    break;
-                }
-            }
-
-            chunk_hashes
-                .into_iter()
-                .fold(Sha256::new(), |mut acc, hash| {
-                    acc.input(hash);
-                    acc
-                })
-                .result()
-        };
-
-        assert!(upload_service_hash.hash == format!("{:x}", expected_hash))
     }
 
     #[test]
