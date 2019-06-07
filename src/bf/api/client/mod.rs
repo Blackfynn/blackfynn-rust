@@ -71,6 +71,12 @@ lazy_static! {
         (StatusCode::BAD_GATEWAY, IDEMPOTENT_METHODS.clone()),
         (StatusCode::GATEWAY_TIMEOUT, IDEMPOTENT_METHODS.clone()),
     ].into_iter().collect();
+
+    /// A vec of status codes that cannot be resolved by retrying the
+    /// request and should be bubbled up directly to the caller
+    static ref NONRETRYABLE_STATUS_CODES: Vec<StatusCode> = vec![
+        StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN
+    ];
 }
 
 /// Given the number of the current attempt, calculate the delay (in
@@ -358,9 +364,12 @@ impl Blackfynn {
                                 retry_state.try_num += 1;
 
                                 if retry_state.try_num > MAX_RETRIES {
-                                    into_future_trait(future::err(
-                                        ErrorKind::RetriesExceeded.into(),
-                                    ))
+                                    into_future_trait(future::err(Error::retries_exceeded(
+                                        Error::api_error(
+                                            status_code,
+                                            String::from_utf8_lossy(&body),
+                                        ),
+                                    )))
                                 } else {
                                     let delay = retry_delay(retry_state.try_num);
                                     debug!("Rate limit exceeded, retrying in {} ms...", delay);
@@ -985,9 +994,17 @@ impl Blackfynn {
         let import_id = import_id.clone();
         let progress_callback = progress_callback.clone();
 
+        let missing_file_names: Option<Vec<String>> = missing_parts
+            .clone()
+            .map(|mp| mp.files.into_iter().map(|f| f.file_name).collect());
+
         let fs = stream::futures_unordered(
             files
                 .into_iter()
+                .filter(|file| match &missing_file_names {
+                    None => true,
+                    Some(mp) => mp.contains(file.file_name()),
+                })
                 .zip(iter::repeat(path.as_ref().to_path_buf()))
                 .map(|file| future::ok::<(model::S3File, PathBuf), Error>(file.clone())),
         )
@@ -1221,33 +1238,47 @@ impl Blackfynn {
                 })
                 .into_future()
                 .or_else(move |err| {
-                    if MAX_RETRIES > ld_err.try_num {
-                        if ld_err.failed {
-                            ld_err.try_num += 1;
-                        } else {
-                            ld_err.try_num = 1;
+                    debug!("Upload encountered an error: {error}", error = err);
+
+                    match err.kind() {
+                        // error cannot be retried, bubble up the error
+                        ErrorKind::ApiError{ status_code, .. } if NONRETRYABLE_STATUS_CODES.contains(status_code) => {
+                            debug!("Upload received status {status} from API which cannot be retried", status = status_code);
+                            into_future_trait(future::err(err))
                         }
-                        let delay = retry_delay(ld_err.try_num);
 
-                        ld_err.failed = true;
+                        // error that should be retried (if we are under MAX_RETRIES), retry the upload
+                        _ if MAX_RETRIES > ld_err.try_num => {
+                            if ld_err.failed {
+                                ld_err.try_num += 1;
+                            } else {
+                                ld_err.try_num = 1;
+                            }
+                            let delay = retry_delay(ld_err.try_num);
 
-                        debug!("Upload encountered an error: {error}", error = err);
-                        debug!("Waiting {millis} millis to retry...", millis = delay);
+                            ld_err.failed = true;
 
-                        // delay
-                        let deadline = time::Instant::now() + time::Duration::from_millis(delay);
-                        let continue_loop = tokio::timer::Delay::new(deadline)
-                            .map_err(Into::<Error>::into)
-                            .map(move |_| {
-                                debug!(
-                                    "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
-                                    try_num = ld_err.try_num, retries = MAX_RETRIES
-                                );
-                                future::Loop::Continue(ld_err)
-                            });
-                        into_future_trait(continue_loop)
-                    } else {
-                        into_future_trait(future::err(ErrorKind::RetriesExceeded.into()))
+                            debug!("Waiting {millis} millis to retry...", millis = delay);
+
+                            // delay
+                            let deadline = time::Instant::now() + time::Duration::from_millis(delay);
+                            let continue_loop = tokio::timer::Delay::new(deadline)
+                                .map_err(Into::<Error>::into)
+                                .map(move |_| {
+                                    debug!(
+                                        "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
+                                        try_num = ld_err.try_num, retries = MAX_RETRIES
+                                    );
+                                    future::Loop::Continue(ld_err)
+                                });
+                            into_future_trait(continue_loop)
+                        }
+
+                        // MAX_RETRIES exceeded, bubble up the error
+                        _ => {
+                            error!("Retries exceeded during upload. Bubbling up error {error}", error = err);
+                            into_future_trait(future::err(Error::retries_exceeded(err)))
+                        }
                     }
                 })
         })
