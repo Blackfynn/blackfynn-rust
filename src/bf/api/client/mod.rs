@@ -19,7 +19,7 @@ use hyper::header::{HeaderName, HeaderValue};
 use hyper::{self, Method, StatusCode};
 use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
-use log::debug;
+use log::{debug, error};
 use serde;
 use serde_json;
 use tokio;
@@ -1196,7 +1196,6 @@ impl Blackfynn {
             try_num: usize,
             bf: Blackfynn,
             parallelism: usize,
-            failed: bool,
         }
         let ld = LoopDependencies {
             organization_id: organization_id.clone(),
@@ -1209,17 +1208,15 @@ impl Blackfynn {
             try_num: 0,
             bf: self.clone(),
             parallelism,
-            failed: false,
         };
 
         let retry_loop = future::loop_fn(ld, |mut ld| {
-            let mut ld_err = ld.clone();
+            let ld_err = ld.clone();
 
             ld.bf
                 .get_upload_status_using_upload_service(&ld.organization_id, &ld.import_id)
                 .map(|parts| {
                     ld.missing_parts = parts;
-                    ld.failed = false;
                     ld
                 })
                 .and_then(|ld| {
@@ -1249,14 +1246,7 @@ impl Blackfynn {
 
                         // error that should be retried (if we are under MAX_RETRIES), retry the upload
                         _ if MAX_RETRIES > ld_err.try_num => {
-                            if ld_err.failed {
-                                ld_err.try_num += 1;
-                            } else {
-                                ld_err.try_num = 1;
-                            }
                             let delay = retry_delay(ld_err.try_num);
-
-                            ld_err.failed = true;
 
                             debug!("Waiting {millis} millis to retry...", millis = delay);
 
