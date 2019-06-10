@@ -364,11 +364,9 @@ impl Blackfynn {
                                 retry_state.try_num += 1;
 
                                 if retry_state.try_num > MAX_RETRIES {
-                                    into_future_trait(future::err(Error::retries_exceeded(
-                                        Error::api_error(
-                                            status_code,
-                                            String::from_utf8_lossy(&body),
-                                        ),
+                                    into_future_trait(future::err(Error::api_error(
+                                        status_code,
+                                        String::from_utf8_lossy(&body),
                                     )))
                                 } else {
                                     let delay = retry_delay(retry_state.try_num);
@@ -1267,7 +1265,7 @@ impl Blackfynn {
                         // MAX_RETRIES exceeded, bubble up the error
                         _ => {
                             error!("Retries exceeded during upload. Bubbling up error {error}", error = err);
-                            into_future_trait(future::err(Error::retries_exceeded(err)))
+                            into_future_trait(future::err(err))
                         }
                     }
                 })

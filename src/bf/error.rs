@@ -79,13 +79,6 @@ impl Error {
     pub fn invalid_unicode_path(path: PathBuf) -> Error {
         ErrorKind::InvalidUnicodePath { path }.into()
     }
-
-    pub fn retries_exceeded(last_error: Error) -> Error {
-        ErrorKind::RetriesExceeded {
-            last_error: format!("{}", last_error),
-        }
-        .into()
-    }
 }
 
 impl Fail for Error {
@@ -150,9 +143,6 @@ pub enum ErrorKind {
 
     #[fail(display = "no organization set")]
     NoOrganizationSet,
-
-    #[fail(display = "retries exceeded: last error: {}", last_error)]
-    RetriesExceeded { last_error: String },
 
     #[fail(display = "missing upload id")]
     S3MissingUploadId,
