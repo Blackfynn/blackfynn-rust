@@ -144,9 +144,6 @@ pub enum ErrorKind {
     #[fail(display = "no organization set")]
     NoOrganizationSet,
 
-    #[fail(display = "retries exceeded")]
-    RetriesExceeded,
-
     #[fail(display = "missing upload id")]
     S3MissingUploadId,
 
