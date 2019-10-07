@@ -1747,6 +1747,7 @@ pub mod tests {
 
         let expected = vec![
             ("Agent".to_string(), "owner".to_string()),
+            ("Maha".to_string(), "viewer".to_string()),
             ("Matt".to_string(), "manager".to_string()),
             ("Michael".to_string(), "manager".to_string()),
             ("Peter".to_string(), "manager".to_string()),
