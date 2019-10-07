@@ -47,7 +47,7 @@ impl fmt::Display for Environment {
         let printable = match *self {
             Environment::Local => "local",
             Environment::Development => "development",
-            Environment::NonProduction => "non-prod",
+            Environment::NonProduction => "nonproduction",
             Environment::Production => "production",
         };
 
@@ -62,7 +62,7 @@ impl FromStr for Environment {
         match s.trim().to_lowercase().as_ref() {
             "dev" | "development" => Ok(Environment::Development),
             "prod" | "production" => Ok(Environment::Production),
-            "non-prod" | "nonproduction" => Ok(Environment::NonProduction),
+            "nonprod" | "nonproduction" => Ok(Environment::NonProduction),
             "local" => Ok(Environment::Local),
             _ => Err(Error::env_parse_error(s)),
         }
