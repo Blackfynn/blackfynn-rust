@@ -22,7 +22,7 @@ pub use self::aws::{
     SecretKey,
 };
 pub use self::channel::Channel;
-pub use self::dataset::{Dataset, DatasetId, DatasetNodeId, DatasetStatus};
+pub use self::dataset::{Dataset, DatasetId, DatasetNodeId};
 pub use self::file::File;
 pub use self::organization::{Organization, OrganizationId};
 pub use self::package::{Package, PackageId};
