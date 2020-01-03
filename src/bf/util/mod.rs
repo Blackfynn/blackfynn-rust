@@ -10,7 +10,7 @@ use rand::{thread_rng, Rng};
 /// Generates an alphanumeric string of the given length.
 #[allow(dead_code)]
 pub fn rand_alphanum(length: usize) -> String {
-    let mut rng = thread_rng();
+    let rng = thread_rng();
     rng.sample_iter(&Alphanumeric)
         .take(length)
         .collect::<String>()

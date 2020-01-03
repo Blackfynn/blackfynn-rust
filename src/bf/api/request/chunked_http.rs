@@ -392,5 +392,4 @@ mod tests {
         assert_eq!(progress.percent_done(), 100 as f32);
         assert_eq!(progress.is_done(), true);
     }
-
 }

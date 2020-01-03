@@ -9,9 +9,6 @@ pub mod response;
 use std::borrow::Borrow;
 
 pub use self::client::progress::{ProgressCallback, ProgressUpdate};
-pub use self::client::s3::{
-    MultipartUploadResult, S3Uploader, UploadProgress, UploadProgressIter, S3_MIN_PART_SIZE,
-};
 
 pub use self::client::Blackfynn;
 
