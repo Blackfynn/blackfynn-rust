@@ -803,7 +803,7 @@ impl Blackfynn {
     }
 
     /// Generate a preview of the files to be uploaded.
-    pub fn preview_upload_using_upload_service<P, Q>(
+    pub fn preview_upload<P, Q>(
         &self,
         organization_id: &OrganizationId,
         dataset_id: &DatasetId,
@@ -867,7 +867,7 @@ impl Blackfynn {
 
     #[allow(clippy::too_many_arguments)]
     /// Upload a batch of files using the upload service.
-    pub fn upload_file_chunks_to_upload_service<P, C>(
+    pub fn upload_file_chunks<P, C>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1004,7 +1004,7 @@ impl Blackfynn {
     }
 
     /// Complete an upload to the upload service
-    pub fn complete_upload_using_upload_service(
+    pub fn complete_upload(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1032,7 +1032,7 @@ impl Blackfynn {
     }
 
     /// Get the upload status using the upload service
-    pub fn get_upload_status_using_upload_service(
+    pub fn get_upload_status(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1048,7 +1048,7 @@ impl Blackfynn {
     }
 
     /// Get the hash of an uploaded file from the upload service
-    pub fn get_upload_hash_using_upload_service<S>(
+    pub fn get_upload_hash<S>(
         &self,
         import_id: &ImportId,
         file_name: S,
@@ -1063,7 +1063,7 @@ impl Blackfynn {
         )
     }
 
-    pub fn upload_file_chunks_to_upload_service_retries<P, C>(
+    pub fn upload_file_chunks_with_retries<P, C>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1089,6 +1089,24 @@ impl Blackfynn {
             bf: Blackfynn,
             parallelism: usize,
         }
+
+        impl<C: ProgressCallback + Clone> LoopDependencies<C> {
+            pub fn increment_attempt_count(self) -> Self {
+                Self {
+                    organization_id: self.organization_id,
+                    import_id: self.import_id,
+                    path: self.path,
+                    files: self.files,
+                    missing_parts: self.missing_parts,
+                    result: self.result,
+                    progress_callback: self.progress_callback,
+                    try_num: self.try_num + 1,
+                    bf: self.bf,
+                    parallelism: self.parallelism,
+                }
+            }
+        }
+
         let ld = LoopDependencies {
             organization_id: organization_id.clone(),
             import_id: import_id.clone(),
@@ -1107,14 +1125,14 @@ impl Blackfynn {
             let ld_err = ld.clone();
 
             ld.bf
-                .get_upload_status_using_upload_service(&ld.organization_id, &ld.import_id)
+                .get_upload_status(&ld.organization_id, &ld.import_id)
                 .map(|parts| {
                     ld.missing_parts = parts;
                     ld
                 })
                 .and_then(|ld| {
                     ld.bf
-                        .upload_file_chunks_to_upload_service(
+                        .upload_file_chunks(
                             &ld.organization_id,
                             &ld.import_id,
                             ld.path.clone(),
@@ -1128,6 +1146,7 @@ impl Blackfynn {
                 })
                 .into_future()
                 .or_else(move |err| {
+
                     debug!("Upload encountered an error: {error}", error = err);
 
                     match err.kind() {
@@ -1152,7 +1171,7 @@ impl Blackfynn {
                                         "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
                                         try_num = ld_err.try_num, retries = MAX_RETRIES
                                     );
-                                    future::Loop::Continue(ld_err)
+                                    future::Loop::Continue(ld_err.increment_attempt_count())
                                 });
                             into_future_trait(continue_loop)
                         }
@@ -2047,7 +2066,7 @@ pub mod tests {
                 })
             })
             .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
-                bf.preview_upload_using_upload_service(
+                bf.preview_upload(
                     &organization_id.clone(),
                     &dataset_int_id,
                     Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2078,7 +2097,7 @@ pub mod tests {
                     let progress_indicator = ProgressIndicator::new();
 
                     // upload using the retries function
-                    bf.upload_file_chunks_to_upload_service_retries(
+                    bf.upload_file_chunks_with_retries(
                         &organization_id,
                         &import_id,
                         &file_path,
@@ -2089,7 +2108,7 @@ pub mod tests {
                     .collect()
                     .map(|_| (bf_clone, dataset_id))
                     .and_then(move |(bf, dataset_id)| {
-                        bf.complete_upload_using_upload_service(
+                        bf.complete_upload(
                             &organization_id,
                             &import_id,
                             &dataset_id,
@@ -2135,7 +2154,7 @@ pub mod tests {
                         .iter()
                         .map(|(id, file)| (*id, format!("{}/{}", *TEST_DATA_DIR, file)))
                         .collect();
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         None as Option<String>,
@@ -2167,7 +2186,7 @@ pub mod tests {
 
                         let progress_indicator = ProgressIndicator::new();
 
-                        bf.upload_file_chunks_to_upload_service(
+                        bf.upload_file_chunks(
                             &organization_id,
                             &import_id,
                             file_path,
@@ -2179,7 +2198,7 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
+                            bf.complete_upload(
                                 &organization_id,
                                 &import_id,
                                 &dataset_id,
@@ -2228,7 +2247,7 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2261,7 +2280,7 @@ pub mod tests {
                         let progress_indicator = ProgressIndicator::new();
 
                         // only upload the first chunk
-                        bf.upload_file_chunks_to_upload_service(
+                        bf.upload_file_chunks(
                             &organization_id,
                             &import_id,
                             file_path.clone(),
@@ -2284,13 +2303,13 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.get_upload_status_using_upload_service(&organization_id, &import_id)
+                            bf.get_upload_status(&organization_id, &import_id)
                                 .map(|status| (bf, dataset_id, organization_id, import_id, status))
                         })
                         .and_then(
                             move |(bf, dataset_id, organization_id, import_id, status)| {
                                 // upload the rest of the chunks based on the status response
-                                bf.upload_file_chunks_to_upload_service(
+                                bf.upload_file_chunks(
                                     &organization_id,
                                     &import_id,
                                     file_path,
@@ -2305,7 +2324,7 @@ pub mod tests {
                         )
                         .and_then(
                             move |(bf, dataset_id, organization_id, import_id)| {
-                                bf.complete_upload_using_upload_service(
+                                bf.complete_upload(
                                     &organization_id,
                                     &import_id,
                                     &dataset_id,
@@ -2368,7 +2387,7 @@ pub mod tests {
 
             let f = upload_to_upload_service(bf, enumerated_test_file.clone()).and_then(
                 move |(bf, _, import_id)| {
-                    bf.get_upload_hash_using_upload_service(&import_id, test_file_name)
+                    bf.get_upload_hash(&import_id, test_file_name)
                 },
             );
             into_future_trait(f)
@@ -2410,7 +2429,7 @@ pub mod tests {
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     let enumerated_files = add_upload_ids(&files_with_path);
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2446,7 +2465,7 @@ pub mod tests {
                         let progress_indicator = ProgressIndicator::new();
 
                         // upload using the retries function
-                        bf.upload_file_chunks_to_upload_service_retries(
+                        bf.upload_file_chunks_with_retries(
                             &organization_id,
                             &import_id,
                             &file_path,
@@ -2457,7 +2476,7 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
+                            bf.complete_upload(
                                 &organization_id,
                                 &import_id,
                                 &dataset_id,
