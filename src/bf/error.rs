@@ -159,9 +159,6 @@ pub enum ErrorKind {
     #[fail(display = "tokio error: {}", error)]
     TokioError { error: String },
 
-    #[fail(display = "rusoto error: {}", error)]
-    RusotoError { error: String },
-
     #[fail(display = "json serialization error: {}", error)]
     SerdeJsonError { error: String },
 
@@ -193,50 +190,6 @@ impl From<std::path::StripPrefixError> for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Error {
         Error::from(Context::new(ErrorKind::IoError {
-            error: error.to_string(),
-        }))
-    }
-}
-
-/// map from rusoto errors
-impl From<rusoto_core::request::TlsError> for Error {
-    fn from(error: rusoto_core::request::TlsError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
-            error: error.to_string(),
-        }))
-    }
-}
-impl From<rusoto_s3::UploadPartError> for Error {
-    fn from(error: rusoto_s3::UploadPartError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
-            error: error.to_string(),
-        }))
-    }
-}
-impl From<rusoto_s3::AbortMultipartUploadError> for Error {
-    fn from(error: rusoto_s3::AbortMultipartUploadError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
-            error: error.to_string(),
-        }))
-    }
-}
-impl From<rusoto_s3::CompleteMultipartUploadError> for Error {
-    fn from(error: rusoto_s3::CompleteMultipartUploadError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
-            error: error.to_string(),
-        }))
-    }
-}
-impl From<rusoto_s3::PutObjectError> for Error {
-    fn from(error: rusoto_s3::PutObjectError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
-            error: error.to_string(),
-        }))
-    }
-}
-impl From<rusoto_s3::CreateMultipartUploadError> for Error {
-    fn from(error: rusoto_s3::CreateMultipartUploadError) -> Error {
-        Error::from(Context::new(ErrorKind::RusotoError {
             error: error.to_string(),
         }))
     }

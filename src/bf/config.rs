@@ -17,8 +17,6 @@ pub enum Environment {
     #[allow(dead_code)]
     Local,
     #[allow(dead_code)]
-    Development,
-    #[allow(dead_code)]
     NonProduction,
     #[allow(dead_code)]
     Production,
@@ -35,7 +33,6 @@ impl Environment {
                     .parse::<Url>()
                     .unwrap_or_else(|_| panic!("Not a valid url: {}", api_loc))
             }
-            Development => "https://dev.blackfynn.io".parse::<Url>().unwrap(),
             NonProduction => "https://api.blackfynn.net".parse::<Url>().unwrap(),
             Production => "https://api.blackfynn.io".parse::<Url>().unwrap(),
         }
@@ -46,7 +43,6 @@ impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let printable = match *self {
             Environment::Local => "local",
-            Environment::Development => "development",
             Environment::NonProduction => "nonproduction",
             Environment::Production => "production",
         };
@@ -60,10 +56,10 @@ impl FromStr for Environment {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_ref() {
-            "dev" | "development" => Ok(Environment::Development),
-            "prod" | "production" => Ok(Environment::Production),
-            "nonprod" | "nonproduction" => Ok(Environment::NonProduction),
+            // Alias dev to non-prod:
+            "dev" | "development" | "non-prod" | "nonprod" | "nonproduction" => Ok(Environment::NonProduction),
             "local" => Ok(Environment::Local),
+            "prod" | "production" => Ok(Environment::Production),
             _ => Err(Error::env_parse_error(s)),
         }
     }

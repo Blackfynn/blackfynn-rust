@@ -1,9 +1,6 @@
 //! Functions to interact with the Blackfynn platform.
 
 pub mod progress;
-pub mod s3;
-
-pub use self::s3::{MultipartUploadResult, S3Uploader, UploadProgress, UploadProgressIter};
 
 pub use self::progress::{ProgressCallback, ProgressUpdate};
 
@@ -30,7 +27,7 @@ use crate::bf::config::{Config, Environment};
 use crate::bf::model::upload::MultipartUploadId;
 use crate::bf::model::{
     self, DatasetId, DatasetNodeId, FileUpload, ImportId, OrganizationId, PackageId, SessionToken,
-    TemporaryCredential, UploadId,
+    UploadId,
 };
 use crate::bf::util::futures::{into_future_trait, into_stream_trait};
 use crate::bf::{Error, ErrorKind, Future, Result, Stream};
@@ -805,111 +802,8 @@ impl Blackfynn {
         get!(self, route!("/organizations/{id}/teams", id))
     }
 
-    /// Grant temporary upload access to the specific dataset for the current session.
-    #[deprecated(
-        since = "0.4.0",
-        note = "please upload using the upload service instead"
-    )]
-    pub fn grant_upload(&self, id: DatasetNodeId) -> Future<response::UploadCredential> {
-        get!(self, route!("/security/user/credentials/upload/{id}", id))
-    }
-
-    /// Grant temporary streaming access for the current user.
-    pub fn grant_streaming(&self) -> Future<response::TemporaryCredential> {
-        get!(self, "/security/user/credentials/streaming")
-    }
-
     /// Generate a preview of the files to be uploaded.
-    #[deprecated(
-        since = "0.4.0",
-        note = "please upload using the upload service instead"
-    )]
     pub fn preview_upload<P, Q>(
-        &self,
-        path: P,
-        files: &[(UploadId, Q)],
-        append: bool,
-    ) -> Future<response::UploadPreview>
-    where
-        P: AsRef<Path>,
-        Q: AsRef<Path>,
-    {
-        let s3_files: Result<Vec<model::S3File>> = files
-            .iter()
-            .map(|(id, file)| FileUpload::new_non_recursive_upload(*id, path.as_ref().join(file)))
-            .collect::<Result<Vec<_>>>()
-            .and_then(|file_uploads| {
-                file_uploads
-                    .iter()
-                    .map(|file_upload| file_upload.to_s3_file())
-                    .collect()
-            });
-
-        let bf = self.clone();
-
-        let post = s3_files.into_future().and_then(move |s3_files| {
-            post!(
-                bf,
-                "/files/upload/preview",
-                params!("append" => if append { "true" } else { "false" }),
-                &request::UploadPreview::new(&s3_files)
-            )
-        });
-
-        into_future_trait(post)
-    }
-
-    /// Get a S3 uploader.
-    #[deprecated(
-        since = "0.4.0",
-        note = "please upload using the upload service instead"
-    )]
-    pub fn s3_uploader(&self, creds: TemporaryCredential) -> Result<S3Uploader> {
-        let (access_key, secret_key, session_token) = creds.take();
-        S3Uploader::new(
-            self.inner
-                .lock()
-                .unwrap()
-                .config
-                .s3_server_side_encryption()
-                .clone(),
-            access_key,
-            secret_key,
-            session_token,
-        )
-    }
-
-    /// Completes the file upload process.
-    #[deprecated(
-        since = "0.4.0",
-        note = "please upload using the upload service instead"
-    )]
-    pub fn complete_upload(
-        &self,
-        import_id: &ImportId,
-        dataset_id: &DatasetNodeId,
-        destination_id: Option<&PackageId>,
-        append: bool,
-        use_upload_service: bool,
-    ) -> Future<response::Manifests> {
-        let mut params = params!(
-            "uploadService" => if use_upload_service { "true" } else { "false" },
-            "append" => if append { "true" } else { "false" },
-            "datasetId" => dataset_id
-        );
-        if let Some(dest_id) = destination_id {
-            params.push(param!("destinationId", dest_id.clone()));
-        }
-
-        post!(
-            self,
-            route!("/files/upload/complete/{import_id}", import_id),
-            params
-        )
-    }
-
-    /// Generate a preview of the files to be uploaded.
-    pub fn preview_upload_using_upload_service<P, Q>(
         &self,
         organization_id: &OrganizationId,
         dataset_id: &DatasetId,
@@ -973,7 +867,7 @@ impl Blackfynn {
 
     #[allow(clippy::too_many_arguments)]
     /// Upload a batch of files using the upload service.
-    pub fn upload_file_chunks_to_upload_service<P, C>(
+    pub fn upload_file_chunks<P, C>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1110,7 +1004,7 @@ impl Blackfynn {
     }
 
     /// Complete an upload to the upload service
-    pub fn complete_upload_using_upload_service(
+    pub fn complete_upload(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1138,7 +1032,7 @@ impl Blackfynn {
     }
 
     /// Get the upload status using the upload service
-    pub fn get_upload_status_using_upload_service(
+    pub fn get_upload_status(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1154,7 +1048,7 @@ impl Blackfynn {
     }
 
     /// Get the hash of an uploaded file from the upload service
-    pub fn get_upload_hash_using_upload_service<S>(
+    pub fn get_upload_hash<S>(
         &self,
         import_id: &ImportId,
         file_name: S,
@@ -1169,7 +1063,7 @@ impl Blackfynn {
         )
     }
 
-    pub fn upload_file_chunks_to_upload_service_retries<P, C>(
+    pub fn upload_file_chunks_with_retries<P, C>(
         &self,
         organization_id: &OrganizationId,
         import_id: &ImportId,
@@ -1195,6 +1089,24 @@ impl Blackfynn {
             bf: Blackfynn,
             parallelism: usize,
         }
+
+        impl<C: ProgressCallback + Clone> LoopDependencies<C> {
+            pub fn increment_attempt_count(self) -> Self {
+                Self {
+                    organization_id: self.organization_id,
+                    import_id: self.import_id,
+                    path: self.path,
+                    files: self.files,
+                    missing_parts: self.missing_parts,
+                    result: self.result,
+                    progress_callback: self.progress_callback,
+                    try_num: self.try_num + 1,
+                    bf: self.bf,
+                    parallelism: self.parallelism,
+                }
+            }
+        }
+
         let ld = LoopDependencies {
             organization_id: organization_id.clone(),
             import_id: import_id.clone(),
@@ -1209,17 +1121,18 @@ impl Blackfynn {
         };
 
         let retry_loop = future::loop_fn(ld, |mut ld| {
+
             let ld_err = ld.clone();
 
             ld.bf
-                .get_upload_status_using_upload_service(&ld.organization_id, &ld.import_id)
+                .get_upload_status(&ld.organization_id, &ld.import_id)
                 .map(|parts| {
                     ld.missing_parts = parts;
                     ld
                 })
                 .and_then(|ld| {
                     ld.bf
-                        .upload_file_chunks_to_upload_service(
+                        .upload_file_chunks(
                             &ld.organization_id,
                             &ld.import_id,
                             ld.path.clone(),
@@ -1233,6 +1146,7 @@ impl Blackfynn {
                 })
                 .into_future()
                 .or_else(move |err| {
+
                     debug!("Upload encountered an error: {error}", error = err);
 
                     match err.kind() {
@@ -1257,7 +1171,7 @@ impl Blackfynn {
                                         "Attempting to resume missing parts. Attempt {try_num}/{retries})...",
                                         try_num = ld_err.try_num, retries = MAX_RETRIES
                                     );
-                                    future::Loop::Continue(ld_err)
+                                    future::Loop::Continue(ld_err.increment_attempt_count())
                                 });
                             into_future_trait(continue_loop)
                         }
@@ -1291,40 +1205,35 @@ impl Blackfynn {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::collections::HashSet;
-    use std::fmt::Debug;
-    use std::{cell, fs, path, result, sync, thread, time};
+    use std::{fs, path, result, sync, thread};
 
     use lazy_static::lazy_static;
 
-    use crate::bf::api::client::s3::MultipartUploadResult;
     // use bf::api::{BFChildren, BFId, BFName};
     use crate::bf::config::Environment;
     use crate::bf::util::futures::into_future_trait;
     use crate::bf::util::rand_suffix;
 
-    const TEST_ENVIRONMENT: Environment = Environment::Development;
+    const TEST_ENVIRONMENT: Environment = Environment::NonProduction;
     const TEST_API_KEY: &str = env!("BLACKFYNN_API_KEY");
     const TEST_SECRET_KEY: &str = env!("BLACKFYNN_SECRET_KEY");
 
-    // "Blackfynn"
-    const FIXTURE_ORGANIZATION: &str = "N:organization:c905919f-56f5-43ae-9c2a-8d5d542c133b";
+    // "Agent Testing"
+    const FIXTURE_ORGANIZATION: &str = "N:organization:01ba6b51-7bdb-4e02-889e-260ea3fd9d68";
 
-    // Dedicated agent email (dev)
+    // Dedicated agent email
     #[allow(dead_code)]
     const FIXTURE_EMAIL: &str = "agent-test@blackfynn.com";
 
-    // Dedicated agent user (dev)
-    #[allow(dead_code)]
-    const FIXTURE_USER: &str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
+    // // Dedicated agent user
+    // #[allow(dead_code)]
+    // const FIXTURE_USER: &str = "N:user:6caa1955-c39e-4198-83c6-aa8fe3afbe93";
 
-    // "AGENT-DATASET-DO-NOT-DELETE" (dev)
-    const FIXTURE_DATASET: &str = "N:dataset:ef04462a-df3e-4a47-a657-f7ec80003b9e";
-    const FIXTURE_DATASET_NAME: &str = "AGENT-DATASET-DO-NOT-DELETE";
+    const FIXTURE_DATASET: &str = "N:dataset:87c06de9-2f5c-47c9-9537-c9586abbdd1a";
+    const FIXTURE_DATASET_NAME: &str = "$AGENT-FIXTURE";
 
-    // "AGENT-TEST-PACKAGE" (dev)
-    const FIXTURE_PACKAGE: &str = "N:collection:cb924124-afa9-49d8-8fdb-2135883312cf";
-    const FIXTURE_PACKAGE_NAME: &str = "AGENT-TEST-PACKAGE";
+    const FIXTURE_PACKAGE: &str = "N:collection:391faf26-2e0b-419f-a465-6a247aabcbd7";
+    const FIXTURE_PACKAGE_NAME: &str = "$AGENT-TEST-PACKAGE";
 
     lazy_static! {
         static ref CONFIG: Config = Config::new(TEST_ENVIRONMENT);
@@ -1745,15 +1654,9 @@ pub mod tests {
             .collect();
         collaborators.sort();
 
-        let expected = vec![
-            ("Agent".to_string(), "owner".to_string()),
-            ("Maha".to_string(), "viewer".to_string()),
-            ("Matt".to_string(), "manager".to_string()),
-            ("Michael".to_string(), "manager".to_string()),
-            ("Peter".to_string(), "manager".to_string()),
-        ];
+        let expected = ("Michael".to_string(), "owner".to_string());
 
-        assert_eq!(collaborators, expected);
+        assert!(collaborators.contains(&expected));
     }
 
     #[test]
@@ -1772,7 +1675,7 @@ pub mod tests {
             .collect();
         collaborators.sort();
 
-        let expected = vec![("Matt's Team".to_string(), "editor".to_string())];
+        let expected = vec![("Agent Devs".to_string(), "manager".to_string())];
 
         assert_eq!(collaborators, expected);
     }
@@ -1790,7 +1693,7 @@ pub mod tests {
             organization_role.name().clone(),
             organization_role.role().cloned(),
         );
-        let expected = ("Blackfynn".to_string(), Some("manager".to_string()));
+        let expected = ("Agent Testing".to_string(), None);
 
         assert_eq!(organization_role, expected);
     }
@@ -2128,313 +2031,6 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn fetching_upload_credential_granting_works() {
-        let cred = run(&bf(), move |bf| {
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| bf.grant_upload(DatasetNodeId::new(FIXTURE_DATASET))),
-            )
-        });
-        if cred.is_err() {
-            panic!("{}", cred.unwrap_err().to_string());
-        }
-    }
-
-    #[test]
-    fn preview_upload_file_working() {
-        let preview =
-            run(&bf(), move |bf| {
-                let enumerated_files = add_upload_ids(&*TEST_FILES);
-                into_future_trait(bf.login(TEST_API_KEY, TEST_SECRET_KEY).and_then(move |_| {
-                    bf.preview_upload(&*TEST_DATA_DIR, &enumerated_files, false)
-                }))
-            });
-        if preview.is_err() {
-            panic!("{}", preview.unwrap_err().to_string());
-        }
-    }
-
-    struct UploadScaffold {
-        dataset_id: DatasetNodeId,
-        preview: response::UploadPreview,
-        upload_credential: response::UploadCredential,
-    }
-
-    // Creates a scaffold used to build further tests for uploading:
-    fn create_upload_scaffold(
-        test_path: String,
-        test_files: Vec<String>,
-    ) -> Box<dyn Fn(Blackfynn) -> Future<(UploadScaffold, Blackfynn)>> {
-        Box::new(move |bf| {
-            let test_path = test_path.clone();
-            let test_files = add_upload_ids(&test_files);
-
-            into_future_trait(
-                bf.login(TEST_API_KEY, TEST_SECRET_KEY)
-                    .and_then(move |_| {
-                        bf.create_dataset(
-                            rand_suffix("$agent-test-dataset".to_string()),
-                            Some("A test dataset created by the agent".to_string()),
-                        )
-                        .map(move |ds| (bf, ds))
-                    })
-                    .and_then(move |(bf, ds)| {
-                        let id = ds.id().clone();
-                        bf.grant_upload(id.clone())
-                            .map(move |cred| (bf, id.clone(), cred))
-                    })
-                    .and_then(move |(bf, dataset_id, creds)| {
-                        bf.preview_upload(test_path, &test_files, false)
-                            .map(|preview| (bf, dataset_id, preview, creds))
-                    })
-                    .and_then(|(bf, dataset_id, preview, upload_credential)| {
-                        future::ok(UploadScaffold {
-                            dataset_id,
-                            preview,
-                            upload_credential,
-                        })
-                        .join(Ok(bf))
-                    }),
-            )
-        })
-    }
-
-    #[test]
-    fn simple_file_uploading() {
-        let result = run(&bf(), move |bf| {
-            let f =
-                create_upload_scaffold((*TEST_DATA_DIR).to_string(), (&*TEST_FILES).to_vec())(bf)
-                    .and_then(move |(scaffold, bf)| {
-                        let bf_clone = bf.clone();
-                        let upload_credential = scaffold.upload_credential.clone();
-                        let uploader = bf
-                            .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
-                            .unwrap();
-                        let dataset_id = scaffold.dataset_id.clone();
-                        let outer_dataset_id = dataset_id.clone();
-                        stream::futures_unordered(scaffold.preview.into_iter().map(
-                            move |package| {
-                                let dataset_id = dataset_id.clone();
-                                let upload_credential = upload_credential.clone();
-                                // Simple, non-multipart uploading:
-                                uploader
-                                    .put_objects(
-                                        &*TEST_DATA_DIR,
-                                        package.files(),
-                                        package.import_id().clone(),
-                                        upload_credential.into(),
-                                    )
-                                    .map(move |import_id| (dataset_id, import_id))
-                            },
-                        ))
-                        .map(move |(dataset_id, import_id)| {
-                            bf.complete_upload(&import_id, &dataset_id.clone(), None, false, false)
-                        })
-                        .collect()
-                        .map(move |fs| (bf_clone, outer_dataset_id, fs))
-                    })
-                    .and_then(|(bf, dataset_id, fs)| {
-                        stream::futures_unordered(fs)
-                            .collect()
-                            .map(|manifests| (bf, dataset_id, manifests))
-                    })
-                    .and_then(|(bf, dataset_id, manifests)| {
-                        let mut file_count = 0;
-                        for manifest in manifests {
-                            for entry in manifest.entries() {
-                                let n = entry.files().len();
-                                assert!(n > 0);
-                                file_count += n;
-                            }
-                        }
-                        assert_eq!(file_count, TEST_FILES.len());
-                        Ok((bf, dataset_id))
-                    })
-                    .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id));
-
-            into_future_trait(f)
-        });
-
-        if result.is_err() {
-            println!("{}", result.unwrap_err().to_string());
-            panic!();
-        }
-    }
-
-    #[test]
-    fn multipart_file_uploading() {
-        let result =
-            run(&bf(), move |bf| {
-                let bf_clone = bf.clone();
-                let f = create_upload_scaffold(
-                    (*TEST_DATA_DIR).to_string(),
-                    (&*TEST_FILES).to_vec(),
-                )(bf)
-                .and_then(move |(scaffold, bf)| {
-                    let dataset_id = scaffold.dataset_id.clone();
-                    let dataset_id_inner = scaffold.dataset_id.clone();
-                    let cred = scaffold.upload_credential.clone();
-                    let uploader = bf
-                        .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
-                        .unwrap();
-                    stream::iter_ok::<_, Error>(scaffold.preview.into_iter().map(move |package| {
-                        uploader.multipart_upload_files(
-                            &*TEST_DATA_DIR,
-                            package.files(),
-                            package.import_id().clone(),
-                            cred.clone().into(),
-                        )
-                    }))
-                    .flatten()
-                    .filter_map(move |result| match result {
-                        MultipartUploadResult::Complete(import_id, _) => Some(bf.complete_upload(
-                            &import_id,
-                            &dataset_id.clone(),
-                            None,
-                            false,
-                            false,
-                        )),
-                        _ => None,
-                    })
-                    .collect()
-                    .map(|fs| (fs, dataset_id_inner))
-                })
-                .and_then(|(fs, dataset_id)| {
-                    stream::futures_unordered(fs)
-                        .collect()
-                        .map(|manifests| (dataset_id, manifests))
-                })
-                .and_then(|(dataset_id, manifests)| {
-                    let mut file_count = 0;
-                    for manifest in manifests {
-                        for entry in manifest.entries() {
-                            let n = entry.files().len();
-                            assert!(n > 0);
-                            file_count += n;
-                        }
-                    }
-                    assert_eq!(file_count, TEST_FILES.len());
-                    Ok(dataset_id)
-                })
-                .and_then(move |dataset_id| bf_clone.delete_dataset(dataset_id));
-
-                into_future_trait(f)
-            });
-
-        if result.is_err() {
-            println!("{}", result.unwrap_err().to_string());
-            panic!();
-        }
-    }
-
-    #[derive(Debug)]
-    enum UploadStatus<S: Debug, T: Debug> {
-        Completed(S),
-        Aborted(T),
-    }
-
-    #[test]
-    fn multipart_big_file_uploading() {
-        let cb = ProgressIndicator::new();
-
-        let result = run(&bf(), move |bf| {
-            let cb = cb.clone();
-
-            let f = create_upload_scaffold(
-                (*BIG_TEST_DATA_DIR).to_string(),
-                (&*BIG_TEST_FILES).to_vec(),
-            )(bf)
-            .and_then(|(scaffold, bf)| {
-                let bf_clone = bf.clone();
-                let cred = scaffold.upload_credential.clone();
-                let dataset_id = scaffold.dataset_id.clone();
-                let dataset_id_outer = dataset_id.clone();
-                let mut uploader = bf
-                    .s3_uploader(scaffold.upload_credential.take().take_temp_credentials())
-                    .unwrap();
-                // Check the progress of the upload by polling every 1s:
-                if let Ok(mut indicator) = uploader.progress() {
-                    thread::spawn(move || {
-                        let done = cell::RefCell::new(HashSet::<path::PathBuf>::new());
-                        loop {
-                            thread::sleep(time::Duration::from_millis(1000));
-                            for (path, update) in &mut indicator {
-                                let p = path.to_path_buf();
-                                if !done.borrow().contains(&p) {
-                                    println!("{:?} => {}%", p, update.percent_done());
-                                    if update.percent_done() >= 100.0 {
-                                        done.borrow_mut().insert(p);
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-
-                stream::iter_ok::<_, Error>(scaffold.preview.into_iter().map(move |package| {
-                    let cb = cb.clone();
-                    uploader.multipart_upload_files_cb(
-                        &*BIG_TEST_DATA_DIR,
-                        package.files(),
-                        package.import_id().clone(),
-                        cred.clone().into(),
-                        cb,
-                    )
-                }))
-                .flatten()
-                .map(move |result| {
-                    match result {
-                        MultipartUploadResult::Complete(import_id, _) => {
-                            into_future_trait(
-                                bf.complete_upload(&import_id, &dataset_id, None, false, false)
-                                    .then(|r| {
-                                        // wrap the results as an UploadStatus so we can return
-                                        // errors as strictly value, rather something that will
-                                        // affect the control flow of the future itself:
-                                        match r {
-                                            Ok(manifest) => Ok(UploadStatus::Completed(manifest)),
-                                            Err(err) => Ok(UploadStatus::Aborted(err)),
-                                        }
-                                    }),
-                            )
-                        }
-                        MultipartUploadResult::Abort(originating_err, _) => {
-                            into_future_trait(future::ok(UploadStatus::Aborted(originating_err)))
-                        }
-                    }
-                })
-                .collect()
-                .map(|fs| (bf_clone, fs, dataset_id_outer))
-            })
-            .and_then(|(bf, fs, dataset_id)| {
-                stream::futures_unordered(fs)
-                    .collect()
-                    .map(|manifests| (bf, dataset_id, manifests))
-            })
-            .and_then(|(bf, dataset_id, manifests)| {
-                for entry in manifests {
-                    match entry {
-                        UploadStatus::Completed(_) => assert!(true),
-                        UploadStatus::Aborted(e) => {
-                            println!("ABORTED => {:#?}", e);
-                            assert!(false)
-                        }
-                    }
-                }
-                Ok((bf, dataset_id))
-            })
-            .and_then(move |(bf, dataset_id)| bf.delete_dataset(dataset_id).map(|_| ()));
-
-            into_future_trait(f)
-        });
-
-        if result.is_err() {
-            println!("{}", result.unwrap_err().to_string());
-            panic!();
-        }
-    }
-
     fn upload_to_upload_service_with_delete(files: Vec<(UploadId, String)>) -> Result<()> {
         run(&bf(), move |bf| {
             let f = upload_to_upload_service(bf, files.clone())
@@ -2470,7 +2066,7 @@ pub mod tests {
                 })
             })
             .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
-                bf.preview_upload_using_upload_service(
+                bf.preview_upload(
                     &organization_id.clone(),
                     &dataset_int_id,
                     Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2501,7 +2097,7 @@ pub mod tests {
                     let progress_indicator = ProgressIndicator::new();
 
                     // upload using the retries function
-                    bf.upload_file_chunks_to_upload_service_retries(
+                    bf.upload_file_chunks_with_retries(
                         &organization_id,
                         &import_id,
                         &file_path,
@@ -2512,7 +2108,7 @@ pub mod tests {
                     .collect()
                     .map(|_| (bf_clone, dataset_id))
                     .and_then(move |(bf, dataset_id)| {
-                        bf.complete_upload_using_upload_service(
+                        bf.complete_upload(
                             &organization_id,
                             &import_id,
                             &dataset_id,
@@ -2558,7 +2154,7 @@ pub mod tests {
                         .iter()
                         .map(|(id, file)| (*id, format!("{}/{}", *TEST_DATA_DIR, file)))
                         .collect();
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         None as Option<String>,
@@ -2590,7 +2186,7 @@ pub mod tests {
 
                         let progress_indicator = ProgressIndicator::new();
 
-                        bf.upload_file_chunks_to_upload_service(
+                        bf.upload_file_chunks(
                             &organization_id,
                             &import_id,
                             file_path,
@@ -2602,7 +2198,7 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
+                            bf.complete_upload(
                                 &organization_id,
                                 &import_id,
                                 &dataset_id,
@@ -2651,7 +2247,7 @@ pub mod tests {
                 })
                 .and_then(move |(bf, dataset_id, organization_id, dataset_int_id)| {
                     let enumerated_files = add_upload_ids(&*MEDIUM_TEST_FILES);
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2684,7 +2280,7 @@ pub mod tests {
                         let progress_indicator = ProgressIndicator::new();
 
                         // only upload the first chunk
-                        bf.upload_file_chunks_to_upload_service(
+                        bf.upload_file_chunks(
                             &organization_id,
                             &import_id,
                             file_path.clone(),
@@ -2707,13 +2303,13 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.get_upload_status_using_upload_service(&organization_id, &import_id)
+                            bf.get_upload_status(&organization_id, &import_id)
                                 .map(|status| (bf, dataset_id, organization_id, import_id, status))
                         })
                         .and_then(
                             move |(bf, dataset_id, organization_id, import_id, status)| {
                                 // upload the rest of the chunks based on the status response
-                                bf.upload_file_chunks_to_upload_service(
+                                bf.upload_file_chunks(
                                     &organization_id,
                                     &import_id,
                                     file_path,
@@ -2728,7 +2324,7 @@ pub mod tests {
                         )
                         .and_then(
                             move |(bf, dataset_id, organization_id, import_id)| {
-                                bf.complete_upload_using_upload_service(
+                                bf.complete_upload(
                                     &organization_id,
                                     &import_id,
                                     &dataset_id,
@@ -2791,7 +2387,7 @@ pub mod tests {
 
             let f = upload_to_upload_service(bf, enumerated_test_file.clone()).and_then(
                 move |(bf, _, import_id)| {
-                    bf.get_upload_hash_using_upload_service(&import_id, test_file_name)
+                    bf.get_upload_hash(&import_id, test_file_name)
                 },
             );
             into_future_trait(f)
@@ -2833,7 +2429,7 @@ pub mod tests {
                         .map(|filename| format!("medium/{}", filename))
                         .collect();
                     let enumerated_files = add_upload_ids(&files_with_path);
-                    bf.preview_upload_using_upload_service(
+                    bf.preview_upload(
                         &organization_id,
                         &dataset_int_id,
                         Some((*MEDIUM_TEST_DATA_DIR).to_string()),
@@ -2869,7 +2465,7 @@ pub mod tests {
                         let progress_indicator = ProgressIndicator::new();
 
                         // upload using the retries function
-                        bf.upload_file_chunks_to_upload_service_retries(
+                        bf.upload_file_chunks_with_retries(
                             &organization_id,
                             &import_id,
                             &file_path,
@@ -2880,7 +2476,7 @@ pub mod tests {
                         .collect()
                         .map(|_| (bf_clone, dataset_id))
                         .and_then(move |(bf, dataset_id)| {
-                            bf.complete_upload_using_upload_service(
+                            bf.complete_upload(
                                 &organization_id,
                                 &import_id,
                                 &dataset_id,
@@ -2902,5 +2498,4 @@ pub mod tests {
             panic!();
         }
     }
-
 }
